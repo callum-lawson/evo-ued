@@ -1,0 +1,74 @@
+{
+    // Python settings
+    "python.defaultInterpreterPath": "${workspaceFolder}/jaxued-env/bin/python",
+    "python.linting.enabled": true,
+    "python.linting.pylintEnabled": true,
+    "python.linting.flake8Enabled": false,
+    "python.formatting.provider": "black",
+    "python.formatting.blackArgs": [
+        "--line-length",
+        "88"
+    ],
+    // Editor settings
+    "editor.formatOnSave": true,
+    "editor.rulers": [
+        88
+    ],
+    "editor.renderWhitespace": "all",
+    "editor.insertSpaces": true,
+    "editor.tabSize": 4,
+    "files.trimTrailingWhitespace": true,
+    "files.insertFinalNewline": true,
+    // Search settings
+    "search.exclude": {
+        "**/__pycache__": true,
+        "**/venv": true,
+        "**/jaxued-env": true,
+        "**/wandb": true,
+        "**/checkpoints": true
+    },
+    // Documentation related settings for mkdocs
+    "files.associations": {
+        "*.md": "markdown"
+    },
+    // Exclude large directories from watcher
+    "files.watcherExclude": {
+        "**/__pycache__/**": true,
+        "**/venv/**": true,
+        "**/jaxued-env/**": true,
+        "**/wandb/**": true,
+        "**/checkpoints/**": true,
+        "**/.git/**": true
+    },
+    // Terminal settings
+    "terminal.integrated.cwd": "${workspaceFolder}",
+    "terminal.integrated.env.linux": {
+        "PYTHONNOUSERSITE": "1",
+        "CONDA_AUTO_ACTIVATE_BASE": "false"
+    },
+    "terminal.integrated.profiles.linux": {
+        "bash": {
+            "path": "bash",
+            "icon": "terminal-bash"
+        }
+    },
+    "terminal.integrated.defaultProfile.linux": "bash",
+    // Testing settings
+    "python.testing.pytestEnabled": true,
+    "python.testing.unittestEnabled": false,
+    "python.testing.nosetestsEnabled": false,
+    "python.testing.pytestPath": "${workspaceFolder}/jaxued-env/bin/pytest",
+    // Set default indentation for specific file types
+    "[python]": {
+        "editor.formatOnSave": true,
+        "editor.codeActionsOnSave": {
+            "source.organizeImports": "explicit"
+        }
+    },
+    // JAX-specific settings
+    "python.analysis.extraPaths": [
+        "${workspaceFolder}/src"
+    ],
+    // Enable auto-documentation for the project
+    "autoDocstring.docstringFormat": "google"
+}

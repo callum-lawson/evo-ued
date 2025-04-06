@@ -6,9 +6,10 @@ from typing import Any, Optional, Tuple
 Carry = Any
 Output = Any
 
+
 class ResetRNN(nn.Module):
-    """This is a wrapper around an RNN that automatically resets the hidden state upon observing a `done` flag. In this way it is compatible with the jax-style RL loop where episodes automatically end/restart.
-    """
+    """This is a wrapper around an RNN that automatically resets the hidden state upon observing a `done` flag. In this way it is compatible with the jax-style RL loop where episodes automatically end/restart."""
+
     cell: nn.RNNCellBase
 
     @nn.compact
@@ -21,7 +22,9 @@ class ResetRNN(nn.Module):
     ) -> Tuple[Carry, Output]:
         # On episode completion, model resets to this
         if reset_carry is None:
-            reset_carry = self.cell.initialize_carry(jax.random.PRNGKey(0), inputs[0].shape[1:])
+            reset_carry = self.cell.initialize_carry(
+                jax.random.PRNGKey(0), inputs[0].shape[1:]
+            )
         carry = initial_carry if initial_carry is not None else reset_carry
 
         def scan_fn(cell, carry, inputs):

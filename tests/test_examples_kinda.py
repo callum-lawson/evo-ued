@@ -11,6 +11,7 @@ EXAMPLE_SCRIPTS = [
     "maze_paired.py",
 ]
 
+
 @pytest.mark.parametrize("script", EXAMPLE_SCRIPTS)
 def test_run_example(script):
     script_path = os.path.join(EXAMPLES_DIR, script)
@@ -27,7 +28,10 @@ def test_run_example(script):
             timeout=30,
             env=env,
         )
-        assert process.returncode in [None, 0], f"Script {script} failed:\n{process.stderr.decode()}"
+        assert process.returncode in [
+            None,
+            0,
+        ], f"Script {script} failed:\n{process.stderr.decode()}"
     except subprocess.TimeoutExpired:
         pass
     except Exception as e:

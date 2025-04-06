@@ -8,12 +8,14 @@ from flax import struct
 
 from jaxued.environments.underspecified_env import UnderspecifiedEnv
 
+
 @struct.dataclass
 class Level:
     dt: float = 0.05
     g: float = 10.0  # gravity
     m: float = 1.0  # mass
     l: float = 1.0  # length
+
 
 @struct.dataclass
 class EnvState:
@@ -57,15 +59,18 @@ class Pendulum(UnderspecifiedEnv):
         u = jnp.clip(action, -params.max_torque, params.max_torque)
         reward = -(
             angle_normalize(state.theta) ** 2
-            + 0.1 * state.theta_dot ** 2
-            + 0.001 * (u ** 2)
+            + 0.1 * state.theta_dot**2
+            + 0.001 * (u**2)
         )
         reward = reward.squeeze()
 
         newthdot = state.theta_dot + (
             (
-                3 * state.level_params.g / (2 * state.level_params.l) * jnp.sin(state.theta)
-                + 3.0 / (state.level_params.m * state.level_params.l ** 2) * u
+                3
+                * state.level_params.g
+                / (2 * state.level_params.l)
+                * jnp.sin(state.theta)
+                + 3.0 / (state.level_params.m * state.level_params.l**2) * u
             )
             * state.level_params.dt
         )
@@ -75,8 +80,11 @@ class Pendulum(UnderspecifiedEnv):
 
         # Update state dict and evaluate termination conditions
         state = EnvState(
-            newth.squeeze(), newthdot.squeeze(), u.reshape(), state.time + 1,
-            level_params=state.level_params
+            newth.squeeze(),
+            newthdot.squeeze(),
+            u.reshape(),
+            state.time + 1,
+            level_params=state.level_params,
         )
         done = self.is_terminal(state, params)
         return (
@@ -87,11 +95,15 @@ class Pendulum(UnderspecifiedEnv):
             {},
         )
 
-    def reset_env_to_level(self, rng: chex.PRNGKey, level: Level, params: EnvParams) -> tuple[chex.Array, EnvState]:
+    def reset_env_to_level(
+        self, rng: chex.PRNGKey, level: Level, params: EnvParams
+    ) -> tuple[chex.Array, EnvState]:
         """Reset environment state by sampling theta, theta_dot."""
         high = jnp.array([jnp.pi, 1])
         state = jax.random.uniform(rng, shape=(2,), minval=-high, maxval=high)
-        state = EnvState(theta=state[0], theta_dot=state[1], last_u=0.0, time=0, level_params=level)
+        state = EnvState(
+            theta=state[0], theta_dot=state[1], last_u=0.0, time=0, level_params=level
+        )
         return self.get_obs(state), state
 
     def get_obs(self, state: EnvState) -> chex.Array:
@@ -169,23 +181,28 @@ def angle_normalize(x: float) -> float:
 
 
 def make_eval_levels_and_names():
-    length     = jnp.logspace(jnp.log10(0.05), jnp.log10(10), num=10)
-    mass   = jnp.logspace(jnp.log10(0.05), jnp.log10(10), num=10)
+    length = jnp.logspace(jnp.log10(0.05), jnp.log10(10), num=10)
+    mass = jnp.logspace(jnp.log10(0.05), jnp.log10(10), num=10)
 
     def get_arr(length, mass):
         return jnp.array([length, mass])
-    
+
     def make_level(v):
         length, mass = v
         return Level(l=length, m=mass)
-    
-    arrs = jax.vmap(jax.vmap(get_arr, (0, None)), (None, 0))(length, mass).reshape(-1, 2)
+
+    arrs = jax.vmap(jax.vmap(get_arr, (0, None)), (None, 0))(length, mass).reshape(
+        -1, 2
+    )
 
     levels = jax.vmap(make_level)(arrs)
     default = Level()
-    levels = jax.tree_map(lambda x, new: jnp.concatenate([x, jnp.array(new)[None]], axis=0), levels, default)
-    return levels, [f"length_{i:<2}_mass_{j:<2}" for i, j in arrs] + ['default']
-    
+    levels = jax.tree_map(
+        lambda x, new: jnp.concatenate([x, jnp.array(new)[None]], axis=0),
+        levels,
+        default,
+    )
+    return levels, [f"length_{i:<2}_mass_{j:<2}" for i, j in arrs] + ["default"]
 
 
 def make_level_generator() -> Callable[[chex.PRNGKey], Level]:
@@ -198,5 +215,6 @@ def make_level_generator() -> Callable[[chex.PRNGKey], Level]:
             m=mass,
             g=10.0,
             dt=0.05,
-        ) # default
+        )  # default
+
     return sample

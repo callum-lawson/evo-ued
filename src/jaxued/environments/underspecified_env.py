@@ -4,21 +4,26 @@ import chex
 from functools import partial
 from flax import struct
 
+
 @struct.dataclass
 class EnvState:
     pass
+
 
 @struct.dataclass
 class Observation:
     pass
 
+
 @struct.dataclass
 class Level:
     pass
 
+
 @struct.dataclass
 class EnvParams:
     pass
+
 
 class UnderspecifiedEnv(object):
     """
@@ -34,10 +39,11 @@ class UnderspecifiedEnv(object):
         * `step_env`: Perform a step of the environment
         * `reset_env_to_level`: Reset the environment to a particular level
         * `action_space`: Return the action space of the environment
-            
-    The environment also does not automatically reset to a new level once the environment has restarted. 
+
+    The environment also does not automatically reset to a new level once the environment has restarted.
     Look at the `AutoReplay` wrapper if this is desired.
     """
+
     @property
     def default_params(self) -> EnvParams:
         return EnvParams()
