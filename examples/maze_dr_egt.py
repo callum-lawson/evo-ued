@@ -242,7 +242,7 @@ def update_actor_critic_rnn(
         rng (chex.PRNGKey):
         train_state (TrainState):
         init_hstate (chex.ArrayTree):
-        batch (chex.ArrayTree): obs, actions, dones, log_probs, values, targets, advantages
+        batch (chex.ArrayTree): obs, actions, dones, log_probs, values, targets, advantages, env_ids
         num_envs (int):
         n_steps (int):
         n_minibatch (int):
@@ -255,9 +255,9 @@ def update_actor_critic_rnn(
     Returns:
         Tuple[Tuple[chex.PRNGKey, TrainState], chex.ArrayTree]: It returns a new rng, the updated train_state, and the losses. The losses have structure (loss, (l_vf, l_clip, entropy))
     """
-    obs, actions, dones, log_probs, values, targets, advantages = batch
+    obs, actions, dones, log_probs, values, targets, advantages, env_ids = batch
     last_dones = jnp.roll(dones, 1, axis=0).at[0].set(False)
-    batch = obs, actions, last_dones, log_probs, values, targets, advantages
+    batch = obs, actions, last_dones, log_probs, values, targets, advantages, env_ids
 
     def update_epoch(carry, _):
         def update_minibatch(train_state, minibatch):
@@ -270,6 +270,7 @@ def update_actor_critic_rnn(
                 values,
                 targets,
                 advantages,
+                env_ids,
             ) = minibatch
 
             def loss_fn(params):
@@ -280,6 +281,9 @@ def update_actor_critic_rnn(
                 entropy = pi.entropy().mean()
 
                 ratio = jnp.exp(log_probs_pred - log_probs)
+
+                # TODO: add environment importance sampling
+
                 A = (advantages - advantages.mean()) / (advantages.std() + 1e-5)
                 l_clip = (
                     -jnp.minimum(
@@ -601,11 +605,17 @@ def main(config=None, project="JAXUED_TEST"):
             config["gamma"], config["gae_lambda"], last_value, values, rewards, dones
         )
 
+        # Create per-environment identifiers aligned with (num_steps, num_envs)
+        env_ids = jnp.broadcast_to(
+            jnp.arange(config["num_train_envs"], dtype=jnp.int32)[None, :],
+            (config["num_steps"], config["num_train_envs"]),
+        )
+
         (rng, train_state), losses = update_actor_critic_rnn(
             rng,
             train_state,
             train_state.last_hstate,
-            (obs, actions, dones, log_probs, values, targets, advantages),
+            (obs, actions, dones, log_probs, values, targets, advantages, env_ids),
             config["num_train_envs"],
             config["num_steps"],
             config["num_minibatches"],
