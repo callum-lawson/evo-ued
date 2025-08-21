@@ -242,7 +242,7 @@ def update_actor_critic_rnn(
         rng (chex.PRNGKey):
         train_state (TrainState):
         init_hstate (chex.ArrayTree):
-        batch (chex.ArrayTree): obs, actions, dones, log_probs, values, targets, advantages, env_ids
+        batch (chex.ArrayTree): obs, actions, dones, log_probs, values, targets, advantages, env_ids, env_weights
         num_envs (int):
         n_steps (int):
         n_minibatch (int):
@@ -255,9 +255,9 @@ def update_actor_critic_rnn(
     Returns:
         Tuple[Tuple[chex.PRNGKey, TrainState], chex.ArrayTree]: It returns a new rng, the updated train_state, and the losses. The losses have structure (loss, (l_vf, l_clip, entropy))
     """
-    obs, actions, dones, log_probs, values, targets, advantages, env_ids = batch
+    obs, actions, dones, log_probs, values, targets, advantages, env_ids, env_weights = batch
     last_dones = jnp.roll(dones, 1, axis=0).at[0].set(False)
-    batch = obs, actions, last_dones, log_probs, values, targets, advantages, env_ids
+    batch = obs, actions, last_dones, log_probs, values, targets, advantages, env_ids, env_weights
 
     def update_epoch(carry, _):
         def update_minibatch(train_state, minibatch):
@@ -271,6 +271,7 @@ def update_actor_critic_rnn(
                 targets,
                 advantages,
                 env_ids,
+                env_weights,
             ) = minibatch
 
             def loss_fn(params):
@@ -286,23 +287,20 @@ def update_actor_critic_rnn(
                 # Use jax softmax verison?
 
                 A = (advantages - advantages.mean()) / (advantages.std() + 1e-5)
-                # normalize advantages
-                l_clip = (
-                    -jnp.minimum(
-                        ratio * A, jnp.clip(ratio, 1 - clip_eps, 1 + clip_eps) * A
-                    )
-                ).mean() # policy clipping AND mean loss
+                # Weighted clipped policy loss (weights are aligned via minibatch permutation)
+                clipped_loss_per_step = -jnp.minimum(
+                    ratio * A, jnp.clip(ratio, 1 - clip_eps, 1 + clip_eps) * A
+                )
+                l_clip = (clipped_loss_per_step * env_weights).mean()
 
                 values_pred_clipped = values + (values_pred - values).clip(
                     -clip_eps, clip_eps
                 ) # value function clipping
-                l_vf = (
-                    0.5
-                    * jnp.maximum(
-                        (values_pred - targets) ** 2,
-                        (values_pred_clipped - targets) ** 2,
-                    ).mean()
-                ) # value function mean loss
+                value_loss_per_step = 0.5 * jnp.maximum(
+                    (values_pred - targets) ** 2,
+                    (values_pred_clipped - targets) ** 2,
+                )
+                l_vf = (value_loss_per_step * env_weights).mean()
 
                 loss = l_clip + critic_coeff * l_vf - entropy_coeff * entropy
                 # policy + value + entropy
@@ -617,11 +615,19 @@ def main(config=None, project="JAXUED_TEST"):
             (config["num_steps"], config["num_train_envs"]),
         )
 
+        # Compute inverse-competition weights per environment before minibatching
+        env_returns = rewards.sum(axis=0)  # (num_envs,)
+        env_weight_per_env = jax.nn.softmax(-env_returns)  # proportional to inverse softmax
+        env_weight_per_env = env_weight_per_env * config["num_train_envs"] / env_weight_per_env.sum()
+        env_weights = jnp.broadcast_to(
+            env_weight_per_env[None, :], (config["num_steps"], config["num_train_envs"])
+        )
+
         (rng, train_state), losses = update_actor_critic_rnn(
             rng,
             train_state,
             train_state.last_hstate,
-            (obs, actions, dones, log_probs, values, targets, advantages, env_ids),
+            (obs, actions, dones, log_probs, values, targets, advantages, env_ids, env_weights),
             config["num_train_envs"],
             config["num_steps"],
             config["num_minibatches"],
