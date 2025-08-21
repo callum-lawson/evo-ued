@@ -72,3 +72,11 @@ def positive_value_loss(dones, advantages, incomplete_value=-jnp.inf):
         dones, jnp.maximum(advantages, 0), time_average=True
     )
     return jnp.where(episode_count > 0, mean_scores, incomplete_value)
+
+
+def negative_mean_reward(dones, rewards, incomplete_value=-jnp.inf):
+    mean_rewards, _, episode_count = accumulate_rollout_stats(
+        dones, rewards, time_average=True
+    )
+    scores = -mean_rewards
+    return jnp.where(episode_count > 0, scores, incomplete_value)

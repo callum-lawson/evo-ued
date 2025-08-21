@@ -27,7 +27,12 @@ from jaxued.environments.maze import (
     make_level_mutator_minimax,
 )
 from jaxued.level_sampler import LevelSampler
-from jaxued.utils import compute_max_returns, max_mc, positive_value_loss
+from jaxued.utils import (
+    compute_max_returns,
+    max_mc,
+    positive_value_loss,
+    negative_mean_reward,
+)
 from jaxued.wrappers import AutoReplayWrapper
 import chex
 from enum import IntEnum
@@ -482,11 +487,13 @@ def train_state_to_log_dict(
     }
 
 
-def compute_score(config, dones, values, max_returns, advantages):
+def compute_score(config, dones, rewards, values, max_returns, advantages):
     if config["score_function"] == "MaxMC":
         return max_mc(dones, values, max_returns)
     elif config["score_function"] == "pvl":
         return positive_value_loss(dones, advantages)
+    elif config["score_function"] == "neg_mean_reward":
+        return negative_mean_reward(dones, rewards)
     else:
         raise ValueError(f"Unknown score function: {config['score_function']}")
 
@@ -712,7 +719,9 @@ def main(config=None, project="JAXUED_TEST"):
                 dones,
             )
             max_returns = compute_max_returns(dones, rewards)
-            scores = compute_score(config, dones, values, max_returns, advantages)
+            scores = compute_score(
+                config, dones, rewards, values, max_returns, advantages
+            )
             sampler, _ = level_sampler.insert_batch(
                 sampler, new_levels, scores, {"max_return": max_returns}
             )
@@ -786,7 +795,9 @@ def main(config=None, project="JAXUED_TEST"):
                 level_sampler.get_levels_extra(sampler, level_inds)["max_return"],
                 compute_max_returns(dones, rewards),
             )
-            scores = compute_score(config, dones, values, max_returns, advantages)
+            scores = compute_score(
+                config, dones, rewards, values, max_returns, advantages
+            )
             sampler = level_sampler.update_batch(
                 sampler, level_inds, scores, {"max_return": max_returns}
             )
@@ -867,7 +878,9 @@ def main(config=None, project="JAXUED_TEST"):
                 dones,
             )
             max_returns = compute_max_returns(dones, rewards)
-            scores = compute_score(config, dones, values, max_returns, advantages)
+            scores = compute_score(
+                config, dones, rewards, values, max_returns, advantages
+            )
             sampler, _ = level_sampler.insert_batch(
                 sampler, child_levels, scores, {"max_return": max_returns}
             )
@@ -1145,7 +1158,10 @@ if __name__ == "__main__":
     group.add_argument("--critic_coeff", type=float, default=0.5)
     # === PLR ===
     group.add_argument(
-        "--score_function", type=str, default="MaxMC", choices=["MaxMC", "pvl"]
+        "--score_function",
+        type=str,
+        default="neg_mean_reward",
+        choices=["MaxMC", "pvl", "neg_mean_reward"],
     )
     group.add_argument(
         "--exploratory_grad_updates",

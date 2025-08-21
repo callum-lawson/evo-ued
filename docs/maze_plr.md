@@ -5,7 +5,7 @@ See the DR example for details about what this outputs, and how to run it.
 ## Arguments
 Name  | Description | Default
 -------------                   | ------------- | -------------
-`--score_function`              | The score function to use, `pvl` or `MaxMC`                                                                                                | MaxMC
+`--score_function`              | The score function to use: `pvl`, `MaxMC`, or `neg_mean_reward` (negative mean reward over the rollout)                                   | MaxMC
 `--exploratory_grad_updates`    | If `True`, trains on random levels                                                                                                         | False
 `--level_buffer_capacity`       | The maximum number of levels in the buffer.                                                                                                | 4000
 `--replay_prob`                 | The probability of performing a `replay` step                                                                                              | 0.8
