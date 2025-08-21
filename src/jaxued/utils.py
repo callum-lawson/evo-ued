@@ -78,5 +78,19 @@ def negative_mean_reward(dones, rewards, incomplete_value=-jnp.inf):
     mean_rewards, _, episode_count = accumulate_rollout_stats(
         dones, rewards, time_average=True
     )
-    scores = -mean_rewards
-    return jnp.where(episode_count > 0, scores, incomplete_value)
+    # Mask to only consider levels with at least one completed episode
+    valid_mask = episode_count > 0
+    num_valid = valid_mask.sum()
+
+    # Compute masked mean and std to standardize across valid levels
+    denom = jnp.maximum(num_valid, 1).astype(mean_rewards.dtype)
+    masked_sum = (mean_rewards * valid_mask).sum()
+    batch_mean = masked_sum / denom
+
+    centered = mean_rewards - batch_mean
+    var = ((centered ** 2) * valid_mask).sum() / denom
+    std = jnp.sqrt(var + 1e-8)
+
+    z_scores = centered / std
+    scores = -z_scores
+    return jnp.where(valid_mask, scores, incomplete_value)
