@@ -617,7 +617,11 @@ def main(config=None, project="JAXUED_TEST"):
 
         # Compute inverse-competition weights per environment before minibatching
         env_returns = rewards.sum(axis=0)  # (num_envs,)
-        env_weight_per_env = jax.nn.softmax(-env_returns)  # proportional to inverse softmax
+        # z-normalize across envs for scale invariance
+        _mean = env_returns.mean()
+        _std = jnp.sqrt(((env_returns - _mean) ** 2).mean() + 1e-8)
+        z = (env_returns - _mean) / _std
+        env_weight_per_env = jax.nn.softmax(-z)
         env_weight_per_env = env_weight_per_env * config["num_train_envs"] / env_weight_per_env.sum()
         env_weights = jnp.broadcast_to(
             env_weight_per_env[None, :], (config["num_steps"], config["num_train_envs"])
