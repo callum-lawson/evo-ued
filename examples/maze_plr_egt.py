@@ -1172,10 +1172,10 @@ if __name__ == "__main__":
     group.add_argument("--replay_prob", type=float, default=0.8)
     group.add_argument("--staleness_coeff", type=float, default=0.3)
     group.add_argument("--temperature", type=float, default=0.3)
-    group.add_argument("--topk_k", type=int, default=4)
+    group.add_argument("--topk_k", type=int, default=None)
     group.add_argument("--minimum_fill_ratio", type=float, default=0.5)
     group.add_argument(
-        "--prioritization", type=str, default="rank", choices=["rank", "topk"]
+        "--prioritization", type=str, default="topk", choices=["rank", "topk"]
     )
     group.add_argument(
         "--buffer_duplicate_check", action=argparse.BooleanOptionalAction, default=True
@@ -1195,6 +1195,10 @@ if __name__ == "__main__":
         config["num_updates"] = config["num_env_steps"] // (
             config["num_train_envs"] * config["num_steps"]
         )
+
+    # Auto-set topk_k to buffer capacity if not specified
+    if config["topk_k"] is None:
+        config["topk_k"] = config["level_buffer_capacity"]
     config["group_name"] = "".join(
         [
             str(config[key])

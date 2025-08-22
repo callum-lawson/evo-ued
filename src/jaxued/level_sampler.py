@@ -383,7 +383,15 @@ class LevelSampler:
                 .at[ord]
                 .set(jnp.arange(self.capacity) < jnp.minimum(sampler["size"], k))
             )
-            w_s = jax.nn.softmax(sampler["scores"], where=topk_mask, initial=0)
+            # Mask logits outside top-k with -inf and apply softmax
+            masked_logits = jnp.where(topk_mask, sampler["scores"], -jnp.inf)
+            w_s = jax.nn.softmax(masked_logits)
+            # Fallback for empty buffer (all -inf logits)
+            w_s = jax.lax.select(
+                w_s.sum() > 0,
+                w_s,
+                mask / jnp.maximum(sampler["size"], 1),
+            )
         else:
             raise Exception(f'"{self.prioritization}" not a valid prioritization.')
 
