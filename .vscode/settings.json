@@ -70,5 +70,11 @@
         "${workspaceFolder}/src"
     ],
     // Enable auto-documentation for the project
-    "autoDocstring.docstringFormat": "google"
+    "autoDocstring.docstringFormat": "google",
+    "python.analysis.typeCheckingMode": "basic",
+    "python.analysis.useLibraryCodeForTypes": true,
+    "python.analysis.diagnosticSeverityOverrides": {
+        "reportAttributeAccessIssue": "none",
+        "reportUnknownMemberType": "none"
+    }
 }
