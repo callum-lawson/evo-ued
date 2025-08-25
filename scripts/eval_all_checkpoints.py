@@ -2,6 +2,7 @@
 import argparse
 import sys
 import subprocess
+import json
 from pathlib import Path
 
 
@@ -22,12 +23,71 @@ def corresponding_results_path(seed_checkpoint_dir: Path) -> Path:
     return results_dir / "results.npz"
 
 
-def run_eval(example_script: str, checkpoint_dir: Path, pass_args: list[str]) -> int:
-    cmd = [sys.executable, example_script, "--mode", "eval", "--checkpoint_directory", str(checkpoint_dir)] + pass_args
+def detect_example_script(seed_checkpoint_dir: Path, default_script: Path) -> Path:
+    """Detect the right example script based on the saved config.json.
+
+    Rules:
+    - ACCEL: if use_accel == true -> use maze_plr.py
+    - PLR: if PLR-specific keys present (e.g., score_function, replay_prob, level_buffer_capacity,
+      staleness_coeff, topk_k, prioritization) -> use maze_plr.py
+    - DR: otherwise -> use maze_dr.py
+    """
+    cfg_path = seed_checkpoint_dir / "config.json"
+    try:
+        with cfg_path.open("r", encoding="utf-8") as f:
+            cfg = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return default_script
+
+    examples_dir = default_script.parent
+    plr_script = examples_dir / "maze_plr.py"
+    dr_script = examples_dir / "maze_dr.py"
+
+    # ACCEL case
+    if bool(cfg.get("use_accel", False)):
+        return plr_script if plr_script.exists() else default_script
+
+    # PLR heuristics based on presence of known PLR keys
+    plr_keys = {
+        "score_function",
+        "replay_prob",
+        "level_buffer_capacity",
+        "staleness_coeff",
+        "topk_k",
+        "prioritization",
+        "buffer_duplicate_check",
+    }
+    if any(k in cfg for k in plr_keys):
+        return plr_script if plr_script.exists() else default_script
+
+    # Otherwise assume DR
+    return dr_script if dr_script.exists() else default_script
+
+
+def run_eval(example_script: Path, checkpoint_dir: Path, pass_args: list[str]) -> int:
+    # Default to 250 eval attempts unless user overrides
+    has_eval_attempts = any(
+        (arg == "--eval_num_attempts") or arg.startswith("--eval_num_attempts=") for arg in pass_args
+    )
+    cmd = [
+        sys.executable,
+        str(example_script),
+        "--mode",
+        "eval",
+        "--checkpoint_directory",
+        str(checkpoint_dir),
+    ]
+    if not has_eval_attempts:
+        cmd += ["--eval_num_attempts", "250"]
+    cmd += pass_args
+
     print(f"Running: {' '.join(cmd)}")
     proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False)
     if proc.returncode != 0:
-        print(f"ERROR evaluating {checkpoint_dir} (exit {proc.returncode})\nSTDOUT:\n{proc.stdout}\nSTDERR:\n{proc.stderr}", file=sys.stderr)
+        print(
+            f"ERROR evaluating {checkpoint_dir} using {example_script} (exit {proc.returncode})\nSTDOUT:\n{proc.stdout}\nSTDERR:\n{proc.stderr}",
+            file=sys.stderr,
+        )
     else:
         # Stream some stdout summary
         print(proc.stdout)
@@ -37,23 +97,24 @@ def run_eval(example_script: str, checkpoint_dir: Path, pass_args: list[str]) ->
 def main():
     parser = argparse.ArgumentParser(description="Evaluate all checkpoints under checkpoints/<run>/<seed>.")
     parser.add_argument("--checkpoints_root", default="./checkpoints", help="Root directory containing run/seed checkpoints")
-    parser.add_argument("--example_script", default="examples/maze_plr.py", help="Evaluation entry script to call")
+    parser.add_argument("--example_script", default="examples/maze_plr.py", help="Default evaluation entry script to call if auto-detect fails")
+    parser.add_argument("--no_auto_detect", action="store_true", help="Disable auto-detection of example script from config.json")
     # Any additional args after '--' will be forwarded verbatim to the eval script
     parser.add_argument("pass_through", nargs=argparse.REMAINDER, help="Arguments to pass through to the eval script (e.g. --checkpoint_to_eval 118)")
 
     args = parser.parse_args()
 
     checkpoints_root = Path(args.checkpoints_root).resolve()
-    example_script = str(Path(args.example_script).resolve())
+    default_example_script = Path(args.example_script).resolve()
 
     # Normalize pass-through: strip a leading '--' separator if present
     pass_args = list(args.pass_through or [])
     if pass_args and pass_args[0] == "--":
         pass_args = pass_args[1:]
 
-    # Ensure example script exists
-    if not Path(example_script).exists():
-        print(f"Example script not found: {example_script}", file=sys.stderr)
+    # Ensure default example script exists
+    if not default_example_script.exists():
+        print(f"Default example script not found: {default_example_script}", file=sys.stderr)
         sys.exit(1)
 
     seed_dirs = find_checkpoint_dirs(checkpoints_root)
@@ -75,6 +136,12 @@ def main():
         # Ensure results directory exists to mirror script expectation
         results_dir = results_npz.parent
         results_dir.mkdir(parents=True, exist_ok=True)
+
+        example_script = (
+            default_example_script
+            if args.no_auto_detect
+            else detect_example_script(seed_dir, default_example_script)
+        )
 
         rc = run_eval(example_script, seed_dir, pass_args)
         if rc == 0 and results_npz.exists():
