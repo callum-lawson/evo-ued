@@ -1,0 +1,6 @@
+[submodule "third_party/jaxued"]
+	path = third_party/jaxued
+	url = https://github.com/DramaCow/jaxued
+[submodule "third_party/remidi"]
+	path = third_party/remidi
+	url = https://github.com/Michael-Beukman/ReMiDi
