@@ -8,7 +8,7 @@ from typing import Optional
 
 # The examples save: states, cum_rewards, episode_lengths, levels
 # We'll extract a tidy table with columns:
-# run_name, seed, attempt, level_index, level_name, cum_reward, episode_length, checkpoint
+# run_name, seed, attempt, level_index, level_name, cum_reward, episode_length, checkpoint, completed, source_npz
 
 
 def parse_run_seed(path: Path) -> tuple[str, str]:
@@ -85,6 +85,9 @@ def extract_single_npz(npz_path: Path, out_dir: Optional[Path], force: bool) -> 
     rows = []
     for a in range(attempts):
         for l in range(num_levels):
+            cr = float(cum_rewards[a, l])
+            el = int(episode_lengths[a, l])
+            completed = 1 if cr > 0 else 0
             rows.append(
                 (
                     run_name,
@@ -92,9 +95,10 @@ def extract_single_npz(npz_path: Path, out_dir: Optional[Path], force: bool) -> 
                     a,
                     l,
                     level_names[l],
-                    float(cum_rewards[a, l]),
-                    int(episode_lengths[a, l]),
+                    cr,
+                    el,
                     checkpoint if checkpoint is not None else None,
+                    completed,
                     str(npz_path),
                 )
             )
@@ -120,6 +124,7 @@ def extract_single_npz(npz_path: Path, out_dir: Optional[Path], force: bool) -> 
             "cum_reward",
             "episode_length",
             "checkpoint",
+            "completed",
             "source_npz",
         ],
     )

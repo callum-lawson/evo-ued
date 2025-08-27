@@ -99,6 +99,12 @@ def main():
     parser.add_argument("--checkpoints_root", default="./checkpoints", help="Root directory containing run/seed checkpoints")
     parser.add_argument("--example_script", default="examples/maze_plr.py", help="Default evaluation entry script to call if auto-detect fails")
     parser.add_argument("--no_auto_detect", action="store_true", help="Disable auto-detection of example script from config.json")
+    parser.add_argument(
+        "--checkpoint_to_eval",
+        type=int,
+        default=118,
+        help="Checkpoint step to evaluate; forwarded to the example script (default: 118)",
+    )
     # Any additional args after '--' will be forwarded verbatim to the eval script
     parser.add_argument("pass_through", nargs=argparse.REMAINDER, help="Arguments to pass through to the eval script (e.g. --checkpoint_to_eval 118)")
 
@@ -111,6 +117,13 @@ def main():
     pass_args = list(args.pass_through or [])
     if pass_args and pass_args[0] == "--":
         pass_args = pass_args[1:]
+
+    # Ensure a checkpoint is specified unless already provided via pass-through
+    has_checkpoint_to_eval = any(
+        (arg == "--checkpoint_to_eval") or arg.startswith("--checkpoint_to_eval=") for arg in pass_args
+    )
+    if not has_checkpoint_to_eval:
+        pass_args += ["--checkpoint_to_eval", str(args.checkpoint_to_eval)]
 
     # Ensure default example script exists
     if not default_example_script.exists():
