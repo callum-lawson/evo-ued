@@ -26,6 +26,10 @@
       "algo": "DR-Baseline"
     },
     {
+      "run_name": "dr_baseline_eval250_seed6_50000a",
+      "algo": "DR-Baseline"
+    },
+    {
       "run_name": "plr_accel_v1_30000a",
       "algo": "ACCEL"
     },
@@ -47,6 +51,10 @@
     },
     {
       "run_name": "accel_eval250_seed5_50000a",
+      "algo": "ACCEL"
+    },
+    {
+      "run_name": "accel_eval250_seed6_50000a",
       "algo": "ACCEL"
     },
     {
@@ -74,6 +82,10 @@
       "algo": "DR-Softmin"
     },
     {
+      "run_name": "dr_softmin_eval250_seed6_50000a",
+      "algo": "DR-Softmin"
+    },
+    {
       "run_name": "plr_softmin_sampling_v2_30000c",
       "algo": "PLR-Negmean"
     },
@@ -95,6 +107,10 @@
     },
     {
       "run_name": "plr_negmean_eval250_seed5_50000a",
+      "algo": "PLR-Negmean"
+    },
+    {
+      "run_name": "plr_negmean_eval250_seed6_50000a",
       "algo": "PLR-Negmean"
     }
   ]
