@@ -34,6 +34,35 @@ def resolve_output_path(
     return (default_dir / "combined.parquet").resolve()
 
 
+def find_candidate_parquets(
+    results_root: Path, run_name: str, seed: Optional[str], checkpoint: Optional[int]
+) -> List[Path]:
+    base = results_root / run_name
+    candidates: List[Path] = []
+
+    if seed is not None:
+        seed_dir = base / seed
+        # Prefer nested checkpoint directories
+        if checkpoint is not None:
+            candidates = [seed_dir / str(checkpoint) / "results_extracted.parquet"]
+        else:
+            candidates = sorted(seed_dir.glob("*/results_extracted.parquet"))
+        # Fallback to legacy flat location
+        legacy = seed_dir / "results_extracted.parquet"
+        if legacy.exists():
+            candidates.append(legacy)
+        return candidates
+
+    # No seed specified: search across seeds
+    if checkpoint is not None:
+        candidates = sorted(base.glob(f"*/{checkpoint}/results_extracted.parquet"))
+    else:
+        candidates = sorted(base.glob("*/*/results_extracted.parquet"))
+    # Fallback to legacy flat per-seed locations
+    candidates += sorted(base.glob("*/results_extracted.parquet"))
+    return candidates
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Combine extracted Parquet files into one.")
     parser.add_argument("--config", required=True, help="Path to JSON config specifying entries (run_name, optional seed/metadata). May also include 'output' or ('output_dir' + 'output_filename').")
@@ -74,23 +103,32 @@ def main() -> int:
     frames = []
     skipped: List[str] = []
 
+    # Global checkpoint specified once at the top-level config (optional)
+    global_checkpoint_opt = int(cfg["checkpoint"]) if "checkpoint" in cfg else None
+
     for e in entries:
         run_name = e["run_name"]
-        # Build list of candidate parquet paths
-        candidate_paths: List[Path] = []
-        if "seed" in e:
-            seed = str(e["seed"])  # normalize
-            candidate_paths = [results_root / run_name / seed / "results_extracted.parquet"]
-        else:
-            candidate_paths = sorted((results_root / run_name).glob("*/results_extracted.parquet"))
-            if not candidate_paths:
-                msg = f"No extracted files found under {results_root / run_name}"
-                if args.fail_fast:
-                    print(msg, file=sys.stderr)
-                    return 1
-                print(msg)
-                skipped.append(str(results_root / run_name))
-                continue
+        seed_opt = None  # seed is no longer specified in configs; aggregate across seeds
+        checkpoint_opt = (
+            global_checkpoint_opt
+            if global_checkpoint_opt is not None
+            else int(e["checkpoint"]) if "checkpoint" in e else None
+        )
+
+        # Build list of candidate parquet paths (supports nested checkpoint directories)
+        candidate_paths = find_candidate_parquets(
+            results_root, run_name, seed_opt, checkpoint_opt
+        )
+        if not candidate_paths:
+            msg = f"No extracted files found under {results_root / run_name}"
+            if checkpoint_opt is not None:
+                msg += f" (checkpoint={checkpoint_opt})"
+            if args.fail_fast:
+                print(msg, file=sys.stderr)
+                return 1
+            print(msg)
+            skipped.append(str(results_root / run_name))
+            continue
 
         for parquet_path in candidate_paths:
             if not parquet_path.exists():
@@ -103,8 +141,15 @@ def main() -> int:
                 continue
             try:
                 df = pd.read_parquet(parquet_path)
-                # Extract seed from parent directory name
-                parsed_seed = parquet_path.parent.name
+                # Extract seed from directory name; supports nested checkpoint dir
+                parent_dir = parquet_path.parent
+                parsed_seed = parent_dir.name
+                try:
+                    # If parent is numeric, it's the checkpoint; go up one for seed
+                    int(parsed_seed)
+                    parsed_seed = parent_dir.parent.name
+                except ValueError:
+                    pass
                 if "seed" not in df.columns:
                     df["seed"] = parsed_seed
                 # Ensure run_name column exists
@@ -114,6 +159,9 @@ def main() -> int:
                 for k in ["algo", "checkpoint"]:
                     if k in e and k not in df.columns:
                         df[k] = e[k]
+                # If checkpoint column still missing, fill from global checkpoint if provided
+                if "checkpoint" not in df.columns and global_checkpoint_opt is not None:
+                    df["checkpoint"] = global_checkpoint_opt
                 frames.append(df)
             except (OSError, ValueError) as e_read:
                 msg = f"ERROR reading {parquet_path}: {e_read}"

@@ -21,8 +21,20 @@ def parse_run_seed(path: Path) -> tuple[str, str]:
 
 
 def infer_checkpoint(npz_path: Path) -> Optional[int]:
-    # Mirror results/<run>/<seed>/ to checkpoints/<run>/<seed>/models/
+    # First try to parse directly from nested results path:
+    # results/<run>/<seed>/<checkpoint>/results.npz
     parts = list(npz_path.resolve().parts)
+    if "results" in parts:
+        idx = parts.index("results")
+        # Need at least: results, run, seed, checkpoint, filename
+        if len(parts) > idx + 3:
+            checkpoint_str = parts[idx + 3]
+            try:
+                return int(checkpoint_str)
+            except (TypeError, ValueError):
+                pass
+
+    # Fallback (legacy): mirror to checkpoints/<run>/<seed>/models/ and take latest
     if "results" not in parts:
         return None
     idx = parts.index("results")
@@ -30,7 +42,7 @@ def infer_checkpoint(npz_path: Path) -> Optional[int]:
     models_dir = mirrored / "models"
     if not models_dir.exists() or not models_dir.is_dir():
         return None
-    steps = []
+    steps: list[int] = []
     for p in models_dir.iterdir():
         if p.is_dir():
             try:
@@ -113,7 +125,7 @@ def extract_single_npz(npz_path: Path, out_dir: Optional[Path], force: bool) -> 
         )
         return None
 
-    df = pd.DataFrame(
+    df = pd.DataFrame.from_records(
         rows,
         columns=[
             "run_name",

@@ -17,10 +17,11 @@ def find_checkpoint_dirs(checkpoints_root: Path):
     return dirs
 
 
-def corresponding_results_path(seed_checkpoint_dir: Path) -> Path:
-    # Replace 'checkpoints' with 'results' and append results.npz
+def corresponding_results_path(seed_checkpoint_dir: Path, checkpoint_step: int) -> Path:
+    # Replace 'checkpoints' with 'results' and append checkpoint subdir and results.npz
+    # Desired structure: results/<run>/<seed>/<checkpoint_step>/results.npz
     results_dir = Path(str(seed_checkpoint_dir).replace("checkpoints", "results", 1))
-    return results_dir / "results.npz"
+    return results_dir / str(checkpoint_step) / "results.npz"
 
 
 def detect_example_script(seed_checkpoint_dir: Path, default_script: Path) -> Path:
@@ -94,6 +95,70 @@ def run_eval(example_script: Path, checkpoint_dir: Path, pass_args: list[str]) -
     return proc.returncode
 
 
+def parse_checkpoint_to_eval(pass_args: list[str], default_value: int) -> int:
+    """Extract the checkpoint step to evaluate from pass-through args or fall back to default.
+
+    Supports both '--checkpoint_to_eval <n>' and '--checkpoint_to_eval=<n>' forms.
+    """
+    for i, arg in enumerate(pass_args):
+        if arg == "--checkpoint_to_eval":
+            try:
+                return int(pass_args[i + 1])
+            except (IndexError, ValueError):
+                break
+        if arg.startswith("--checkpoint_to_eval="):
+            try:
+                return int(arg.split("=", 1)[1])
+            except ValueError:
+                break
+    return int(default_value)
+
+
+def list_available_checkpoint_steps(models_dir: Path) -> list[int]:
+    """List available checkpoint step directories under a 'models' directory.
+
+    Assumes Orbax saves checkpoints in subdirectories named by integer step.
+    """
+    if not models_dir.exists() or not models_dir.is_dir():
+        return []
+    steps: list[int] = []
+    for entry in models_dir.iterdir():
+        if entry.is_dir():
+            try:
+                steps.append(int(entry.name))
+            except ValueError:
+                continue
+    return sorted(steps)
+
+
+def override_checkpoint_arg(pass_args: list[str], step: int) -> list[str]:
+    """Return a copy of pass_args with --checkpoint_to_eval set to the given step.
+
+    Supports both '--checkpoint_to_eval <n>' and '--checkpoint_to_eval=<n>' forms.
+    """
+    updated: list[str] = []
+    i = 0
+    replaced = False
+    while i < len(pass_args):
+        arg = pass_args[i]
+        if arg == "--checkpoint_to_eval":
+            # skip this and its value, replace with new pair
+            i += 2
+            updated += ["--checkpoint_to_eval", str(step)]
+            replaced = True
+            continue
+        if arg.startswith("--checkpoint_to_eval="):
+            updated.append(f"--checkpoint_to_eval={step}")
+            replaced = True
+            i += 1
+            continue
+        updated.append(arg)
+        i += 1
+    if not replaced:
+        updated += ["--checkpoint_to_eval", str(step)]
+    return updated
+
+
 def main():
     parser = argparse.ArgumentParser(description="Evaluate all checkpoints under checkpoints/<run>/<seed>.")
     parser.add_argument("--checkpoints_root", default="./checkpoints", help="Root directory containing run/seed checkpoints")
@@ -139,8 +204,33 @@ def main():
     num_success = 0
     num_failed = 0
 
+    # Determine the base checkpoint step from args (-1 means latest per seed)
+    base_checkpoint_step = parse_checkpoint_to_eval(pass_args, args.checkpoint_to_eval)
+
     for seed_dir in seed_dirs:
-        results_npz = corresponding_results_path(seed_dir)
+        models_dir = seed_dir / "models"
+
+        # Resolve actual step for this seed
+        if base_checkpoint_step >= 0:
+            actual_step = base_checkpoint_step
+        else:
+            available_steps = list_available_checkpoint_steps(models_dir)
+            if not available_steps:
+                print(f"Skip {seed_dir} -> no checkpoints found under {models_dir}")
+                num_skipped += 1
+                continue
+            actual_step = available_steps[-1]
+
+        # Check that the requested checkpoint exists
+        if not (models_dir / str(actual_step)).exists():
+            print(
+                f"Skip {seed_dir} -> checkpoint step {actual_step} not found under {models_dir}"
+            )
+            num_skipped += 1
+            continue
+
+        # Check nested destination path: results/<run>/<seed>/<checkpoint>/results.npz
+        results_npz = corresponding_results_path(seed_dir, actual_step)
         if results_npz.exists():
             print(f"Skip {seed_dir} -> results exists at {results_npz}")
             num_skipped += 1
@@ -156,12 +246,36 @@ def main():
             else detect_example_script(seed_dir, default_example_script)
         )
 
-        rc = run_eval(example_script, seed_dir, pass_args)
-        if rc == 0 and results_npz.exists():
-            num_success += 1
-        elif rc == 0 and not results_npz.exists():
-            print(f"WARNING: Eval succeeded but results file not found at {results_npz}", file=sys.stderr)
-            num_failed += 1
+        # If base step was -1, override pass-through args to pin the resolved step
+        per_seed_pass_args = (
+            pass_args if base_checkpoint_step >= 0 else override_checkpoint_arg(pass_args, actual_step)
+        )
+
+        rc = run_eval(example_script, seed_dir, per_seed_pass_args)
+
+        # The example scripts save to results/<run>/<seed>/results.npz by default.
+        # Move it into the checkpoint subdirectory if present.
+        flat_results_npz = Path(str(seed_dir).replace("checkpoints", "results", 1)) / "results.npz"
+        if rc == 0:
+            if flat_results_npz.exists():
+                try:
+                    # Ensure destination directory exists (already created above), then move
+                    flat_results_npz.rename(results_npz)
+                    print(f"Moved results to {results_npz}")
+                except OSError as e:
+                    print(
+                        f"WARNING: Could not move results from {flat_results_npz} to {results_npz}: {e}",
+                        file=sys.stderr,
+                    )
+
+            if results_npz.exists():
+                num_success += 1
+            else:
+                print(
+                    f"WARNING: Eval succeeded but results file not found at {results_npz}",
+                    file=sys.stderr,
+                )
+                num_failed += 1
         else:
             num_failed += 1
 
