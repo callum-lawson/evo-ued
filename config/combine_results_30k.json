@@ -1,118 +1,54 @@
 {
   "checkpoint": 118,
   "output": "results/combined/dr-softmin_negmean_accel_30k.parquet",
-  "entries": [
-    {
-      "run_name": "dr_baseline_eval250_seed0_30000a",
-      "algo": "DR-Baseline"
-    },
-    {
-      "run_name": "dr_baseline_eval250_seed1_30000a",
-      "algo": "DR-Baseline"
-    },
-    {
-      "run_name": "dr_baseline_eval250_seed2_30000a",
-      "algo": "DR-Baseline"
-    },
-    {
-      "run_name": "dr_baseline_eval250_seed3_30000a",
-      "algo": "DR-Baseline"
-    },
-    {
-      "run_name": "dr_baseline_eval250_seed4_30000a",
-      "algo": "DR-Baseline"
-    },
-    {
-      "run_name": "dr_baseline_eval250_seed5_50000a",
-      "algo": "DR-Baseline"
-    },
-    {
-      "run_name": "dr_baseline_eval250_seed6_50000a",
-      "algo": "DR-Baseline"
-    },
-    {
-      "run_name": "plr_accel_v1_30000a",
-      "algo": "ACCEL"
-    },
-    {
-      "run_name": "accel_eval250_seed1_30000a",
-      "algo": "ACCEL"
-    },
-    {
-      "run_name": "accel_eval250_seed2_30000a",
-      "algo": "ACCEL"
-    },
-    {
-      "run_name": "accel_eval250_seed3_30000a",
-      "algo": "ACCEL"
-    },
-    {
-      "run_name": "accel_eval250_seed4_30000a",
-      "algo": "ACCEL"
-    },
-    {
-      "run_name": "accel_eval250_seed5_50000a",
-      "algo": "ACCEL"
-    },
-    {
-      "run_name": "accel_eval250_seed6_50000a",
-      "algo": "ACCEL"
-    },
-    {
-      "run_name": "dr_softmin_weighting_v2_normalised_30000a",
-      "algo": "DR-Softmin"
-    },
-    {
-      "run_name": "dr_softmin_eval250_seed1_30000a",
-      "algo": "DR-Softmin"
-    },
-    {
-      "run_name": "dr_softmin_eval250_seed2_30000a",
-      "algo": "DR-Softmin"
-    },
-    {
-      "run_name": "dr_softmin_eval250_seed3_30000a",
-      "algo": "DR-Softmin"
-    },
-    {
-      "run_name": "dr_softmin_eval250_seed4_30000a",
-      "algo": "DR-Softmin"
-    },
-    {
-      "run_name": "dr_softmin_eval250_seed5_50000a",
-      "algo": "DR-Softmin"
-    },
-    {
-      "run_name": "dr_softmin_eval250_seed6_50000a",
-      "algo": "DR-Softmin"
-    },
-    {
-      "run_name": "plr_softmin_sampling_v2_30000c",
-      "algo": "PLR-Negmean"
-    },
-    {
-      "run_name": "plr_negmean_eval250_seed1_30000a",
-      "algo": "PLR-Negmean"
-    },
-    {
-      "run_name": "plr_negmean_eval250_seed2_30000a",
-      "algo": "PLR-Negmean"
-    },
-    {
-      "run_name": "plr_negmean_eval250_seed3_30000a",
-      "algo": "PLR-Negmean"
-    },
-    {
-      "run_name": "plr_negmean_eval250_seed4_30000a",
-      "algo": "PLR-Negmean"
-    },
-    {
-      "run_name": "plr_negmean_eval250_seed5_50000a",
-      "algo": "PLR-Negmean"
-    },
-    {
-      "run_name": "plr_negmean_eval250_seed6_50000a",
-      "algo": "PLR-Negmean"
-    }
-  ]
+  "groups": {
+    "DR-Baseline": [
+      "dr_baseline_eval250_seed0_30000a",
+      "dr_baseline_eval250_seed1_30000a",
+      "dr_baseline_eval250_seed2_30000a",
+      "dr_baseline_eval250_seed3_30000a",
+      "dr_baseline_eval250_seed4_30000a",
+      "dr_baseline_eval250_seed5_30000a",
+      "dr_baseline_eval250_seed6_30000a",
+      "dr_baseline_eval250_seed7_30000a",
+      "dr_baseline_eval250_seed8_30000a",
+      "dr_baseline_eval250_seed9_30000a"
+    ],
+    "DR-Softmin": [
+      "dr_softmin_weighting_v2_normalised_30000a",
+      "dr_softmin_eval250_seed1_30000a",
+      "dr_softmin_eval250_seed2_30000a",
+      "dr_softmin_eval250_seed3_30000a",
+      "dr_softmin_eval250_seed4_30000a",
+      "dr_softmin_eval250_seed5_30000a",
+      "dr_softmin_eval250_seed6_30000a",
+      "dr_softmin_eval250_seed7_30000a",
+      "dr_softmin_eval250_seed8_30000a",
+      "dr_softmin_eval250_seed9_30000a"
+    ],
+    "PLR-Negmean": [
+      "plr_softmin_sampling_v2_30000c",
+      "plr_negmean_eval250_seed1_30000a",
+      "plr_negmean_eval250_seed2_30000a",
+      "plr_negmean_eval250_seed3_30000a",
+      "plr_negmean_eval250_seed4_30000a",
+      "plr_negmean_eval250_seed5_30000a",
+      "plr_negmean_eval250_seed6_30000a",
+      "plr_negmean_eval250_seed7_30000a",
+      "plr_negmean_eval250_seed8_30000a",
+      "plr_negmean_eval250_seed9_30000a"
+    ],
+    "ACCEL": [
+      "plr_accel_v1_30000a",
+      "accel_eval250_seed1_30000a",
+      "accel_eval250_seed2_30000a",
+      "accel_eval250_seed3_30000a",
+      "accel_eval250_seed4_30000a",
+      "accel_eval250_seed5_30000a",
+      "accel_eval250_seed6_30000a",
+      "accel_eval250_seed7_30000a",
+      "accel_eval250_seed8_30000a",
+      "accel_eval250_seed9_30000a"
+    ]
+  }
 }

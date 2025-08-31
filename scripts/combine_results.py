@@ -8,14 +8,30 @@ from typing import List, Tuple, Optional
 
 
 def load_config(config_path: Path) -> Tuple[List[dict], dict]:
+    """Load config using the new nested 'groups' format only.
+
+    Expected structure:
+        { "groups": { "Algo": ["run_name", ...] }, "checkpoint": int?, "output": str? }
+
+    Returns a normalized list of entries: [{"run_name": str, "algo": str}], along with the raw cfg dict.
+    """
     with config_path.open("r", encoding="utf-8") as f:
         cfg = json.load(f)
-    entries = cfg.get("entries", [])
-    if not isinstance(entries, list) or not entries:
-        raise ValueError("Config must contain a non-empty 'entries' list")
-    for e in entries:
-        if "run_name" not in e:
-            raise ValueError("Each entry must include 'run_name'")
+
+    groups = cfg.get("groups")
+    if not isinstance(groups, dict) or not groups:
+        raise ValueError("Config must contain a non-empty 'groups' mapping of {algo: [run_names...]}.")
+
+    entries: List[dict] = []
+    for algo, run_names in groups.items():
+        if not isinstance(run_names, list):
+            continue
+        for rn in run_names:
+            entries.append({"run_name": rn, "algo": algo})
+
+    if not entries:
+        raise ValueError("No runs found in 'groups' mapping")
+
     return entries, cfg
 
 
@@ -65,7 +81,7 @@ def find_candidate_parquets(
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Combine extracted Parquet files into one.")
-    parser.add_argument("--config", required=True, help="Path to JSON config specifying entries (run_name, optional seed/metadata). May also include 'output' or ('output_dir' + 'output_filename').")
+    parser.add_argument("--config", required=True, help="Path to JSON config with 'groups': {algo: [run_names...]}. May include 'output' or ('output_dir' + 'output_filename').")
     parser.add_argument("--results_root", default="./results", help="Base results directory")
     parser.add_argument("--output", required=False, help="Output Parquet path (overrides config)")
     parser.add_argument("--fail_fast", action="store_true", help="Stop on first missing/failed file instead of skipping")

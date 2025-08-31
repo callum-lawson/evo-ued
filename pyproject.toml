@@ -42,6 +42,8 @@ examples = [
     "orbax-checkpoint==0.5.3",
     "orbax",
     "wandb",
+    "pandas",
+    "pyarrow",
     "pillow",
     "imageio",
     "moviepy"
@@ -50,3 +52,4 @@ examples = [
 [project.urls]
 Homepage = "https://github.com/dramacow/jaxued"
 Issues = "https://github.com/dramacow/jaxued/issues"
+
