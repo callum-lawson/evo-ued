@@ -1,5 +1,5 @@
 from .wandb_client import WandbDataClient, RunData, RunKey  # noqa: F401
-from .wandb_analysis import (  # noqa: F401
+from .training_analysis import (  # noqa: F401
     HistoryCollectionConfig,
     collect_histories,
     aggregate_mean_std,
@@ -9,6 +9,18 @@ from .wandb_analysis import (  # noqa: F401
     plot_median_quantiles,
     load_runname_group_map_from_file,
     collect_histories_from_run_mapping,
+)
+from .performance_analysis import (  # noqa: F401
+    PerformanceBuildConfig,
+    build_performance_table,
+    compute_maze_similarity_overall,
+    compute_maze_similarity_per_algorithm,
+    compute_winners_by_maze,
+    compute_algorithm_similarity,
+    plot_similarity_heatmap,
+    plot_maze_algorithm_bars,
+    plot_algorithm_facets_over_mazes,
+    make_algorithm_palette,
 )
 
 __all__ = [
@@ -24,6 +36,16 @@ __all__ = [
     "plot_median_quantiles",
     "load_runname_group_map_from_file",
     "collect_histories_from_run_mapping",
+    "PerformanceBuildConfig",
+    "build_performance_table",
+    "compute_maze_similarity_overall",
+    "compute_maze_similarity_per_algorithm",
+    "compute_winners_by_maze",
+    "compute_algorithm_similarity",
+    "plot_similarity_heatmap",
+    "plot_maze_algorithm_bars",
+    "plot_algorithm_facets_over_mazes",
+    "make_algorithm_palette",
 ]
 
 

@@ -196,13 +196,12 @@ def collect_histories_from_run_mapping(
             continue
 
         # Only consider runs that appear in our mapping (by original name, or fallbacks)
-        label = (
-            runname_to_group.get(orig_name)
-            or runname_to_group.get(getattr(run, "name", None))
-            or runname_to_group.get(getattr(run, "id", None))
-            or runname_to_group.get(getattr(run, "group", None))
-        )
-        if not label:
+        label = None
+        for k in (orig_name, getattr(run, "name", None), getattr(run, "id", None), getattr(run, "group", None)):
+            if isinstance(k, str) and k in runname_to_group:
+                label = runname_to_group[k]
+                break
+        if label is None:
             continue
 
         candidates_by_name.setdefault(orig_name, []).append(run)
@@ -297,6 +296,7 @@ def plot_mean_std(
     ax=None,
     label_fmt: str = "{group}",
     fill_alpha: float = 0.2,
+    palette_map: Optional[Dict[str, Any]] = None,
 ):
     """Quick matplotlib plot of mean +/- std per group.
 
@@ -305,7 +305,7 @@ def plot_mean_std(
     import matplotlib.pyplot as plt  # Local import to avoid hard dep at import time
 
     if ax is None:
-        fig, ax = plt.subplots(figsize=(8, 4))
+        _, ax = plt.subplots(figsize=(8, 4))
 
     groups_to_plot = groups or list(agg_df["group"].unique())
     any_plotted = False
@@ -313,9 +313,12 @@ def plot_mean_std(
         gdf = agg_df[agg_df["group"] == g]
         if gdf.empty:
             continue
-        ax.plot(gdf[step_key], gdf["mean"], label=label_fmt.format(group=g))
+        color_kwargs = {}
+        if palette_map is not None and g in palette_map:
+            color_kwargs = {"color": palette_map[g]}
+        ax.plot(gdf[step_key], gdf["mean"], label=label_fmt.format(group=g), **color_kwargs)
         ax.fill_between(
-            gdf[step_key], gdf["mean"] - gdf["std"], gdf["mean"] + gdf["std"], alpha=fill_alpha
+            gdf[step_key], gdf["mean"] - gdf["std"], gdf["mean"] + gdf["std"], alpha=fill_alpha, **color_kwargs
         )
         any_plotted = True
 
@@ -357,12 +360,13 @@ def plot_median_quantiles(
     ax=None,
     label_fmt: str = "{group}",
     fill_alpha: float = 0.2,
+    palette_map: Optional[Dict[str, Any]] = None,
 ):
     """Plot median with a quantile band per group (no smoothing or interpolation)."""
     import matplotlib.pyplot as plt
 
     if ax is None:
-        fig, ax = plt.subplots(figsize=(8, 4))
+        _, ax = plt.subplots(figsize=(8, 4))
 
     groups_to_plot = groups or list(agg_df["group"].unique())
     any_plotted = False
@@ -370,9 +374,12 @@ def plot_median_quantiles(
         gdf = agg_df[agg_df["group"] == g]
         if gdf.empty:
             continue
-        ax.plot(gdf[step_key], gdf["median"], label=label_fmt.format(group=g))
+        color_kwargs = {}
+        if palette_map is not None and g in palette_map:
+            color_kwargs = {"color": palette_map[g]}
+        ax.plot(gdf[step_key], gdf["median"], label=label_fmt.format(group=g), **color_kwargs)
         ax.fill_between(
-            gdf[step_key], gdf["q_low"], gdf["q_high"], alpha=fill_alpha
+            gdf[step_key], gdf["q_low"], gdf["q_high"], alpha=fill_alpha, **color_kwargs
         )
         any_plotted = True
 
