@@ -21,6 +21,10 @@ from .performance_analysis import (  # noqa: F401
     plot_maze_algorithm_bars,
     plot_algorithm_facets_over_mazes,
     make_algorithm_palette,
+    compute_maze_similarity_linkage,
+    plot_maze_similarity_clustering,
+    compute_maze_similarity_linkage_for_algorithm,
+    plot_maze_similarity_clustering_for_algorithm,
 )
 
 __all__ = [
@@ -46,6 +50,10 @@ __all__ = [
     "plot_maze_algorithm_bars",
     "plot_algorithm_facets_over_mazes",
     "make_algorithm_palette",
+    "compute_maze_similarity_linkage",
+    "plot_maze_similarity_clustering",
+    "compute_maze_similarity_linkage_for_algorithm",
+    "plot_maze_similarity_clustering_for_algorithm",
 ]
 
 

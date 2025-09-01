@@ -518,3 +518,245 @@ def plot_similarity_heatmap(matrix: pd.DataFrame, title: Optional[str] = None, c
 
 
 
+
+# ------------------------ Maze similarity clustering ------------------------
+
+def compute_maze_similarity_linkage(
+    df: pd.DataFrame,
+    agg: str = "mean",
+    method: str = "pearson",
+    linkage_method: str = "average",
+):
+    """Compute maze similarity and hierarchical linkage.
+
+    Returns a tuple (similarity_df, linkage_Z). The similarity matrix is
+    [maze x maze] using the specified correlation method; the linkage is built
+    from distance d = 1 - similarity, clipped to [0, 1] and NaNs filled.
+    """
+    from scipy.spatial.distance import squareform  # type: ignore
+    from scipy.cluster.hierarchy import linkage  # type: ignore
+
+    sim = compute_maze_similarity_overall(df, agg=agg, method=method)
+    if sim is None or sim.empty:
+        return pd.DataFrame(), None
+
+    # Convert similarity to distance suitable for hierarchical clustering
+    dist = (1.0 - sim).clip(lower=0).fillna(1.0)
+    condensed = squareform(dist.values, checks=False)
+    Z = linkage(condensed, method=linkage_method)
+    return sim, Z
+
+
+def plot_maze_similarity_clustering(
+    df: pd.DataFrame,
+    agg: str = "mean",
+    method: str = "pearson",
+    linkage_method: str = "average",
+    flat_threshold: Optional[float] = 0.6,
+    title_prefix: Optional[str] = "Maze similarity",
+):
+    """Plot dendrogram and clustered heatmap for maze similarity.
+
+    - Computes similarity across mazes aggregated over algorithms
+    - Builds hierarchical clustering linkage
+    - Plots a dendrogram with maze labels
+    - Plots a clustered heatmap using the same linkage (seaborn if available,
+      otherwise falls back to a reordered heatmap)
+
+    Returns a dict with keys: {"Z", "similarity", "cluster_assignments", "order"}.
+    """
+    import matplotlib.pyplot as plt  # type: ignore
+    from scipy.cluster.hierarchy import dendrogram, fcluster, leaves_list  # type: ignore
+
+    try:
+        import seaborn as sns  # type: ignore
+        have_seaborn = True
+    except ImportError:
+        have_seaborn = False
+
+    sim, Z = compute_maze_similarity_linkage(
+        df, agg=agg, method=method, linkage_method=linkage_method
+    )
+    if sim is None or sim.empty or Z is None:
+        # Produce a placeholder figure
+        _, ax = plt.subplots(figsize=(6, 4))
+        ax.text(0.5, 0.5, "No data", ha="center", va="center")
+        ax.set_axis_off()
+        return {"Z": None, "similarity": pd.DataFrame(), "cluster_assignments": None, "order": None}
+
+    maze_labels = sim.index.tolist()
+
+    # 1) Dendrogram
+    plt.figure(figsize=(10, 6))
+    dendrogram(Z, labels=maze_labels, leaf_rotation=90)
+    title = f"{title_prefix} dendrogram" if title_prefix else "Maze similarity dendrogram"
+    plt.title(title)
+    plt.ylabel("Distance (1 - correlation)")
+    plt.tight_layout()
+    plt.show()
+
+    # Compute leaf order and optional flat clusters
+    order_idx = leaves_list(Z)
+    ordered_labels = [maze_labels[i] for i in order_idx]
+    clusters = None
+    if flat_threshold is not None:
+        clusters = fcluster(Z, t=float(flat_threshold), criterion="distance")
+        # Map back to labels
+        clusters = pd.Series(clusters, index=maze_labels, name="cluster")
+
+    # 2) Clustered heatmap using the same linkage if seaborn is available
+    if have_seaborn:
+        sns.clustermap(
+            sim,
+            row_linkage=Z,
+            col_linkage=Z,
+            cmap="vlag",
+            center=0.0,
+            linewidths=0.5,
+            figsize=(10, 10),
+            xticklabels=True,
+            yticklabels=True,
+            cbar_kws={"label": f"{method.title()} r" if method in {"pearson", "spearman"} else "similarity"},
+        )
+        if title_prefix:
+            plt.suptitle(f"{title_prefix} clustermap", y=1.02)
+        plt.show()
+    else:
+        # Fallback: reorder similarity matrix and plot with matplotlib
+        sim_ord = sim.loc[ordered_labels, ordered_labels]
+        _, ax = plt.subplots(figsize=(10, 10))
+        im = ax.imshow(sim_ord.to_numpy(), cmap="vlag", vmin=-1.0, vmax=1.0)
+        plt.colorbar(im, ax=ax, label=f"{method.title()} r" if method in {"pearson", "spearman"} else "similarity")
+        ax.set_xticks(range(len(ordered_labels)))
+        ax.set_yticks(range(len(ordered_labels)))
+        ax.set_xticklabels(ordered_labels, rotation=90)
+        ax.set_yticklabels(ordered_labels)
+        if title_prefix:
+            ax.set_title(f"{title_prefix} (reordered)")
+        plt.tight_layout()
+        plt.show()
+
+    return {"Z": Z, "similarity": sim, "cluster_assignments": clusters, "order": ordered_labels}
+
+
+# --------------- Maze similarity clustering for a single algorithm -----------
+
+def compute_maze_similarity_linkage_for_algorithm(
+    df: pd.DataFrame,
+    algorithm: str,
+    method: str = "pearson",
+    linkage_method: str = "average",
+):
+    """Compute per-maze similarity and linkage using only one algorithm's runs.
+
+    Steps:
+    - Filter to rows where group == algorithm
+    - Pivot to [run/seed x maze]
+    - Compute correlation across columns (mazes) to get [maze x maze] similarity
+    - Build hierarchical clustering linkage from distance d = 1 - similarity
+    """
+    from scipy.spatial.distance import squareform  # type: ignore
+    from scipy.cluster.hierarchy import linkage  # type: ignore
+
+    if df is None or df.empty:
+        return pd.DataFrame(), None
+
+    dfa = df[df["group"] == algorithm]
+    if dfa.empty:
+        return pd.DataFrame(), None
+
+    pivot = dfa.pivot_table(index="run_name", columns="maze", values="value", aggfunc="mean")
+    pivot = pivot.dropna(axis=1, how="all")
+    if pivot.shape[0] < 2 or pivot.shape[1] < 2:
+        return pd.DataFrame(), None
+
+    if method in {"pearson", "spearman"}:
+        sim = pivot.corr(method=method)
+    else:
+        raise ValueError("method must be 'pearson' or 'spearman' for per-algorithm similarity")
+
+    dist = (1.0 - sim).clip(lower=0).fillna(1.0)
+    condensed = squareform(dist.values, checks=False)
+    Z = linkage(condensed, method=linkage_method)
+    return sim, Z
+
+
+def plot_maze_similarity_clustering_for_algorithm(
+    df: pd.DataFrame,
+    algorithm: str,
+    method: str = "pearson",
+    linkage_method: str = "average",
+    flat_threshold: Optional[float] = 0.6,
+    title_prefix: Optional[str] = None,
+):
+    """Plot dendrogram and clustered heatmap for a single algorithm's maze similarity."""
+    import matplotlib.pyplot as plt  # type: ignore
+    from scipy.cluster.hierarchy import dendrogram, fcluster, leaves_list  # type: ignore
+
+    try:
+        import seaborn as sns  # type: ignore
+        have_seaborn = True
+    except ImportError:
+        have_seaborn = False
+
+    sim, Z = compute_maze_similarity_linkage_for_algorithm(
+        df=df,
+        algorithm=algorithm,
+        method=method,
+        linkage_method=linkage_method,
+    )
+
+    if sim is None or sim.empty or Z is None:
+        _, ax = plt.subplots(figsize=(6, 4))
+        ax.text(0.5, 0.5, f"No data for {algorithm}", ha="center", va="center")
+        ax.set_axis_off()
+        return {"Z": None, "similarity": pd.DataFrame(), "cluster_assignments": None, "order": None}
+
+    maze_labels = sim.index.tolist()
+    ttl_prefix = title_prefix if title_prefix is not None else f"Maze similarity ({algorithm})"
+
+    # 1) Dendrogram
+    plt.figure(figsize=(10, 6))
+    dendrogram(Z, labels=maze_labels, leaf_rotation=90)
+    plt.title(f"{ttl_prefix} dendrogram")
+    plt.ylabel("Distance (1 - correlation)")
+    plt.tight_layout()
+    plt.show()
+
+    order_idx = leaves_list(Z)
+    ordered_labels = [maze_labels[i] for i in order_idx]
+    clusters = None
+    if flat_threshold is not None:
+        clusters = fcluster(Z, t=float(flat_threshold), criterion="distance")
+        clusters = pd.Series(clusters, index=maze_labels, name="cluster")
+
+    # 2) Clustered heatmap
+    if have_seaborn:
+        sns.clustermap(
+            sim,
+            row_linkage=Z,
+            col_linkage=Z,
+            cmap="vlag",
+            center=0.0,
+            linewidths=0.5,
+            figsize=(10, 10),
+            xticklabels=True,
+            yticklabels=True,
+            cbar_kws={"label": f"{method.title()} r"},
+        )
+        plt.suptitle(f"{ttl_prefix} clustermap", y=1.02)
+        plt.show()
+    else:
+        sim_ord = sim.loc[ordered_labels, ordered_labels]
+        _, ax = plt.subplots(figsize=(10, 10))
+        im = ax.imshow(sim_ord.to_numpy(), cmap="vlag", vmin=-1.0, vmax=1.0)
+        plt.colorbar(im, ax=ax, label=f"{method.title()} r")
+        ax.set_xticks(range(len(ordered_labels)))
+        ax.set_yticks(range(len(ordered_labels)))
+        ax.set_xticklabels(ordered_labels, rotation=90)
+        ax.set_yticklabels(ordered_labels)
+        ax.set_title(ttl_prefix)
+        plt.tight_layout()
+        plt.show()
+
+    return {"Z": Z, "similarity": sim, "cluster_assignments": clusters, "order": ordered_labels}
