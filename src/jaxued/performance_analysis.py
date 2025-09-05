@@ -342,7 +342,7 @@ def compute_algorithm_similarity(df: pd.DataFrame, agg: str = "mean", method: st
     return mat.transpose().corr(method=method)
 
 
-def plot_maze_algorithm_bars(values: pd.DataFrame, title: Optional[str] = None, normalize: bool = False):
+def plot_maze_algorithm_bars(values: pd.DataFrame, title: Optional[str] = None, normalize: bool = False, y_label: Optional[str] = None):
     """Grouped bar plot: each maze on x-axis, bars for each algorithm.
 
     Args:
@@ -376,7 +376,7 @@ def plot_maze_algorithm_bars(values: pd.DataFrame, title: Optional[str] = None, 
         palette = make_algorithm_palette(algos)
         sns.barplot(data=long_df, x="maze", y="value", hue="algorithm", dodge=True, ax=ax, palette=palette)
         ax.set_xlabel("maze")
-        ax.set_ylabel("normalized value" if normalize else "value")
+        ax.set_ylabel(y_label if y_label is not None else ("normalized value" if normalize else "value"))
         ax.tick_params(axis='x', rotation=60)
         if title:
             ax.set_title(title)
@@ -402,7 +402,7 @@ def plot_maze_algorithm_bars(values: pd.DataFrame, title: Optional[str] = None, 
     ax.set_xticks(x)
     ax.set_xticklabels(mazes, rotation=60, ha="right")
     ax.set_xlabel("maze")
-    ax.set_ylabel("normalized value" if normalize else "value")
+    ax.set_ylabel(y_label if y_label is not None else ("normalized value" if normalize else "value"))
     if title:
         ax.set_title(title)
     ax.legend(title="algorithm")
@@ -429,7 +429,7 @@ def make_algorithm_palette(algorithms: Sequence[str]) -> Dict[str, str]:
 
 # --------------------------- Faceted algorithm bars ------------------------
 
-def plot_algorithm_facets_over_mazes(values: pd.DataFrame, title: Optional[str] = None, normalize: bool = False, ncols: int = 2):
+def plot_algorithm_facets_over_mazes(values: pd.DataFrame, title: Optional[str] = None, normalize: bool = False, ncols: int = 2, y_label: Optional[str] = None, y_lim_01: bool = False):
     """Facet bar plots: one subplot per algorithm, bars over mazes.
 
     Bars are colored using the algorithm's color to keep consistency across plots.
@@ -464,7 +464,9 @@ def plot_algorithm_facets_over_mazes(values: pd.DataFrame, title: Optional[str] 
         ax.set_xticks(x)
         ax.set_xticklabels(mazes, rotation=60, ha="right")
         ax.set_title(str(algo))
-        ax.set_ylabel("normalized value" if normalize else "value")
+        ax.set_ylabel(y_label if y_label is not None else ("normalized value" if normalize else "value"))
+        if y_lim_01:
+            ax.set_ylim(0.0, 1.0)
 
     # Hide any unused subplots
     for j in range(n, nrows * ncols):

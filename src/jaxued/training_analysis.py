@@ -297,6 +297,8 @@ def plot_mean_std(
     label_fmt: str = "{group}",
     fill_alpha: float = 0.2,
     palette_map: Optional[Dict[str, Any]] = None,
+    y_label: str = "value",
+    x_label: Optional[str] = None,
 ):
     """Quick matplotlib plot of mean +/- std per group.
 
@@ -322,8 +324,9 @@ def plot_mean_std(
         )
         any_plotted = True
 
-    ax.set_xlabel(step_key)
-    ax.set_ylabel("value")
+    xlab = x_label if x_label is not None else ("update" if step_key == "num_updates" else step_key)
+    ax.set_xlabel(xlab)
+    ax.set_ylabel(y_label)
     if any_plotted:
         ax.legend()
     return ax
@@ -361,6 +364,8 @@ def plot_median_quantiles(
     label_fmt: str = "{group}",
     fill_alpha: float = 0.2,
     palette_map: Optional[Dict[str, Any]] = None,
+    y_label: str = "value",
+    x_label: Optional[str] = None,
 ):
     """Plot median with a quantile band per group (no smoothing or interpolation)."""
     import matplotlib.pyplot as plt
@@ -383,8 +388,9 @@ def plot_median_quantiles(
         )
         any_plotted = True
 
-    ax.set_xlabel(step_key)
-    ax.set_ylabel("value")
+    xlab = x_label if x_label is not None else ("update" if step_key == "num_updates" else step_key)
+    ax.set_xlabel(xlab)
+    ax.set_ylabel(y_label)
     if any_plotted:
         ax.legend()
     return ax
