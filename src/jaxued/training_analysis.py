@@ -396,3 +396,162 @@ def plot_median_quantiles(
     return ax
 
 
+
+# -------------------------- Step alignment diagnostics --------------------------
+def summarize_max_steps(df: pd.DataFrame, step_key: str) -> pd.DataFrame:
+    """Return one row per run with its maximum recorded step.
+
+    Input is the long-form history assembled by this module, with columns
+    [step_key, value, run_id, group]. Output columns are [group, run_id, max_step].
+    """
+    if df is None or df.empty:
+        return pd.DataFrame(
+            {
+                "group": pd.Series(dtype="object"),
+                "run_id": pd.Series(dtype="object"),
+                "max_step": pd.Series(dtype="float64"),
+            }
+        )
+
+    max_by_run = df.groupby("run_id")[step_key].max().rename("max_step").reset_index()
+    group_by_run = df.groupby("run_id")["group"].first().reset_index()
+    out = max_by_run.merge(group_by_run, on="run_id")[["group", "run_id", "max_step"]]
+    return out.sort_values(["group", "run_id"]).reset_index(drop=True)
+
+
+def check_update_step_alignment(
+    df: pd.DataFrame,
+    step_key: str,
+    *,
+    per_group: bool = True,
+    atol: float = 0.0,
+) -> pd.DataFrame:
+    """Warn if runs end at different update steps.
+
+    Args:
+        df: Long-form history with columns [step_key, value, run_id, group].
+        step_key: Name of the step column, e.g. "num_updates".
+        per_group: If True, also check within each algorithm group.
+        atol: Absolute tolerance when comparing steps (useful if steps differ by
+              a few due to logging cadence).
+
+    Returns:
+        DataFrame with per-run max steps: columns [group, run_id, max_step].
+    """
+    steps = summarize_max_steps(df, step_key)
+    if steps.empty:
+        return steps
+
+    def _warn_if_inconsistent(scope: str, sub: pd.DataFrame) -> None:
+        vals = sub["max_step"].to_numpy()
+        if len(vals) <= 1:
+            return
+        ref = float(vals[0])
+        mismatched = [v for v in vals if abs(float(v) - ref) > float(atol)]
+        if mismatched:
+            counts = sub.groupby("max_step").size().sort_index()
+            warnings.warn(
+                f"Inconsistent max {step_key} across {scope}: "
+                f"{dict(counts.to_dict())}. Consider aligning by a fixed step."
+            )
+
+    # Global check
+    _warn_if_inconsistent("all runs", steps)
+
+    # Per-group check
+    if per_group:
+        for g, sub in steps.groupby("group"):
+            _warn_if_inconsistent(f"group '{g}'", sub)
+
+    return steps
+
+# ------------------------- Final-evaluation solve table -------------------------
+def final_values_per_run(df: pd.DataFrame, step_key: str) -> pd.DataFrame:
+    """Return one row per run with the final value at the max step.
+
+    Args:
+        df: Long-form history with columns [step_key, value, run_id, group].
+        step_key: Name of the step column, e.g. "num_updates".
+
+    Returns:
+        DataFrame with columns [group, run_id, step, value]. One row per run.
+    """
+    if df is None or df.empty:
+        return pd.DataFrame(
+            {
+                "group": pd.Series(dtype="object"),
+                "run_id": pd.Series(dtype="object"),
+                "step": pd.Series(dtype="float64"),
+                "value": pd.Series(dtype="float64"),
+            }
+        )
+
+    # For each run, select the row with the maximum step
+    # Sort first to make idxmax deterministic when duplicates exist
+    sorted_df = df.sort_values(["run_id", step_key])
+    idx = sorted_df.groupby("run_id")[step_key].idxmax()
+    per_run = (
+        sorted_df.loc[idx, ["group", "run_id", step_key, "value"]]
+        .rename(columns={step_key: "step"})
+        .reset_index(drop=True)
+    )
+    return per_run
+
+
+def summarize_final_values(
+    per_run_df: pd.DataFrame,
+    *,
+    group_order: Optional[Sequence[str]] = None,
+    decimals: int = 2,
+    as_wide_formatted: bool = False,
+) -> pd.DataFrame:
+    """Summarize final per-run values into mean ± std per group.
+
+    Args:
+        per_run_df: Output of final_values_per_run().
+        group_order: Optional explicit order of groups in the result.
+        decimals: Number of decimals for the formatted string.
+        as_wide_formatted: If True, return a single-row wide table with one
+            column per group containing the formatted value "mean ± std".
+
+    Returns:
+        If as_wide_formatted is False (default): columns [group, mean, std, n].
+        If True: single-row DataFrame with columns == groups and string values.
+    """
+    if per_run_df is None or per_run_df.empty:
+        if as_wide_formatted:
+            return pd.DataFrame()
+        return pd.DataFrame(
+            {
+                "group": pd.Series(dtype="object"),
+                "mean": pd.Series(dtype="float64"),
+                "std": pd.Series(dtype="float64"),
+                "n": pd.Series(dtype="int64"),
+            }
+        )
+
+    summary = (
+        per_run_df.groupby("group")["value"].agg(["mean", "std", "count"]).reset_index()
+    )
+    summary = summary.rename(columns={"count": "n"})
+
+    if group_order is not None:
+        # Preserve specified ordering
+        order_map = {g: i for i, g in enumerate(group_order)}
+        summary = summary.assign(_ord=summary["group"].map(order_map)).sort_values(
+            by=["_ord", "group"], na_position="last"
+        ).drop(columns=["_ord"]).reset_index(drop=True)
+
+    if not as_wide_formatted:
+        return summary
+
+    # Build a single-row wide formatted table
+    def _fmt(r: pd.Series) -> str:
+        try:
+            return f"{r['mean']:.{decimals}f} ± {r['std']:.{decimals}f}"
+        except Exception:
+            return ""
+
+    formatted = {row["group"]: _fmt(row) for _, row in summary.iterrows()}
+    wide = pd.DataFrame([formatted])
+    return wide

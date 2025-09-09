@@ -14,6 +14,13 @@
       "dr_baseline_eval250_seed8_30000a",
       "dr_baseline_eval250_seed9_30000a"
     ],
+    "PLR (baseline)": [
+      "plr_baseline_eval250_seed0_30000a",
+      "plr_baseline_eval250_seed1_30000a",
+      "plr_baseline_eval250_seed2_30000a",
+      "plr_baseline_eval250_seed3_30000a",
+      "plr_baseline_eval250_seed4_30000a"
+    ],
     "DR (evolutionary)": [
       "dr_softmin_weighting_v2_normalised_30000a",
       "dr_softmin_eval250_seed1_30000a",

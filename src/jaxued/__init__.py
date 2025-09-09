@@ -9,6 +9,10 @@ from .training_analysis import (  # noqa: F401
     plot_median_quantiles,
     load_runname_group_map_from_file,
     collect_histories_from_run_mapping,
+    final_values_per_run,
+    summarize_final_values,
+    summarize_max_steps,
+    check_update_step_alignment,
 )
 from .performance_analysis import (  # noqa: F401
     PerformanceBuildConfig,
@@ -40,6 +44,10 @@ __all__ = [
     "plot_median_quantiles",
     "load_runname_group_map_from_file",
     "collect_histories_from_run_mapping",
+    "final_values_per_run",
+    "summarize_final_values",
+    "summarize_max_steps",
+    "check_update_step_alignment",
     "PerformanceBuildConfig",
     "build_performance_table",
     "compute_maze_similarity_overall",
