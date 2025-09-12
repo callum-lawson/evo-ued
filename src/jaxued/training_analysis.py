@@ -355,10 +355,13 @@ def aggregate_quantiles(
     return agg
 
 
-def plot_median_quantiles(
+def plot_quantiles(
     agg_df: pd.DataFrame,
     step_key: str,
     *,
+    lower_col: str = "q_low",
+    center_col: Optional[str] = "median",
+    upper_col: str = "q_high",
     groups: Optional[Sequence[str]] = None,
     ax=None,
     label_fmt: str = "{group}",
@@ -367,7 +370,13 @@ def plot_median_quantiles(
     y_label: str = "value",
     x_label: Optional[str] = None,
 ):
-    """Plot median with a quantile band per group (no smoothing or interpolation)."""
+    """Plot a quantile envelope (and optional center) per group.
+
+    Expects an aggregated DataFrame with columns:
+      - "group", step_key
+      - lower_col (default "q_low") and upper_col (default "q_high")
+      - optionally center_col (default "median"); set to None to skip the line
+    """
     import matplotlib.pyplot as plt
 
     if ax is None:
@@ -382,10 +391,17 @@ def plot_median_quantiles(
         color_kwargs = {}
         if palette_map is not None and g in palette_map:
             color_kwargs = {"color": palette_map[g]}
-        ax.plot(gdf[step_key], gdf["median"], label=label_fmt.format(group=g), **color_kwargs)
-        ax.fill_between(
-            gdf[step_key], gdf["q_low"], gdf["q_high"], alpha=fill_alpha, **color_kwargs
-        )
+        if center_col is not None and center_col in gdf.columns:
+            ax.plot(
+                gdf[step_key],
+                gdf[center_col],
+                label=label_fmt.format(group=g),
+                **color_kwargs,
+            )
+        if lower_col in gdf.columns and upper_col in gdf.columns:
+            ax.fill_between(
+                gdf[step_key], gdf[lower_col], gdf[upper_col], alpha=fill_alpha, **color_kwargs
+            )
         any_plotted = True
 
     xlab = x_label if x_label is not None else ("update" if step_key == "num_updates" else step_key)
@@ -394,6 +410,114 @@ def plot_median_quantiles(
     if any_plotted:
         ax.legend()
     return ax
+
+
+def aggregate_quantiles_custom(
+    df: pd.DataFrame,
+    step_key: str,
+    *,
+    q_low: float,
+    q_center: float,
+    q_high: float,
+) -> pd.DataFrame:
+    """Aggregate per group and step into arbitrary low/center/high quantiles.
+
+    Returns columns: [group, step_key, q_low, q_center, q_high, count].
+    """
+    if df.empty:
+        return pd.DataFrame(
+            {
+                "group": pd.Series(dtype="object"),
+                step_key: pd.Series(dtype="float64"),
+                "q_low": pd.Series(dtype="float64"),
+                "q_center": pd.Series(dtype="float64"),
+                "q_high": pd.Series(dtype="float64"),
+                "count": pd.Series(dtype="int64"),
+            }
+        )
+
+    def _q(series: pd.Series, q: float) -> float:
+        return float(series.quantile(q))
+
+    grouped = df.groupby(["group", step_key])["value"]
+    agg = (
+        grouped.agg(
+            q_low=lambda s: _q(s, q_low),
+            q_center=lambda s: _q(s, q_center),
+            q_high=lambda s: _q(s, q_high),
+            count="count",
+        ).reset_index()
+    )
+    return agg
+
+
+def plot_median_interquartile(
+    agg_df: pd.DataFrame,
+    step_key: str,
+    *,
+    groups: Optional[Sequence[str]] = None,
+    ax=None,
+    label_fmt: str = "{group}",
+    fill_alpha: float = 0.2,
+    palette_map: Optional[Dict[str, Any]] = None,
+    y_label: str = "value",
+    x_label: Optional[str] = None,
+):
+    """Convenience wrapper for plotting median with IQR band (0.25, 0.5, 0.75)."""
+    return plot_quantiles(
+        agg_df,
+        step_key,
+        lower_col="q_low",
+        center_col="median",
+        upper_col="q_high",
+        groups=groups,
+        ax=ax,
+        label_fmt=label_fmt,
+        fill_alpha=fill_alpha,
+        palette_map=palette_map,
+        y_label=y_label,
+        x_label=x_label,
+    )
+
+
+def plot_worst_case(
+    df: pd.DataFrame,
+    step_key: str,
+    *,
+    groups: Optional[Sequence[str]] = None,
+    ax=None,
+    label_fmt: str = "{group}",
+    fill_alpha: float = 0.2,
+    palette_map: Optional[Dict[str, Any]] = None,
+    y_label: str = "value",
+    x_label: Optional[str] = None,
+):
+    """Plot a "worst-case" envelope using (0.01, 0.05, 0.10) quantiles.
+
+    This aggregates the raw long-form history first, then plots with the 5th
+    percentile as the center line and 1st-10th percentile as the band.
+    """
+    agg = aggregate_quantiles_custom(
+        df,
+        step_key,
+        q_low=0.01,
+        q_center=0.05,
+        q_high=0.10,
+    )
+    return plot_quantiles(
+        agg,
+        step_key,
+        lower_col="q_low",
+        center_col="q_center",
+        upper_col="q_high",
+        groups=groups,
+        ax=ax,
+        label_fmt=label_fmt,
+        fill_alpha=fill_alpha,
+        palette_map=palette_map,
+        y_label=y_label,
+        x_label=x_label,
+    )
 
 
 
