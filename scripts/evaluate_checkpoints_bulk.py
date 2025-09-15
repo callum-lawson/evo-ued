@@ -68,7 +68,8 @@ def detect_example_script(seed_checkpoint_dir: Path, default_script: Path) -> Pa
 def run_eval(example_script: Path, checkpoint_dir: Path, pass_args: list[str]) -> int:
     # Default to 250 eval attempts unless user overrides
     has_eval_attempts = any(
-        (arg == "--eval_num_attempts") or arg.startswith("--eval_num_attempts=") for arg in pass_args
+        (arg == "--eval_num_attempts") or arg.startswith("--eval_num_attempts=")
+        for arg in pass_args
     )
     cmd = [
         sys.executable,
@@ -83,7 +84,9 @@ def run_eval(example_script: Path, checkpoint_dir: Path, pass_args: list[str]) -
     cmd += pass_args
 
     print(f"Running: {' '.join(cmd)}")
-    proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False)
+    proc = subprocess.run(
+        cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=False
+    )
     if proc.returncode != 0:
         print(
             f"ERROR evaluating {checkpoint_dir} using {example_script} (exit {proc.returncode})\nSTDOUT:\n{proc.stdout}\nSTDERR:\n{proc.stderr}",
@@ -160,10 +163,24 @@ def override_checkpoint_arg(pass_args: list[str], step: int) -> list[str]:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Evaluate all checkpoints under checkpoints/<run>/<seed>.")
-    parser.add_argument("--checkpoints_root", default="./checkpoints", help="Root directory containing run/seed checkpoints")
-    parser.add_argument("--example_script", default="examples/maze_plr.py", help="Default evaluation entry script to call if auto-detect fails")
-    parser.add_argument("--no_auto_detect", action="store_true", help="Disable auto-detection of example script from config.json")
+    parser = argparse.ArgumentParser(
+        description="Evaluate all checkpoints under checkpoints/<run>/<seed>."
+    )
+    parser.add_argument(
+        "--checkpoints_root",
+        default="./checkpoints",
+        help="Root directory containing run/seed checkpoints",
+    )
+    parser.add_argument(
+        "--example_script",
+        default="examples/maze_plr.py",
+        help="Default evaluation entry script to call if auto-detect fails",
+    )
+    parser.add_argument(
+        "--no_auto_detect",
+        action="store_true",
+        help="Disable auto-detection of example script from config.json",
+    )
     parser.add_argument(
         "--checkpoint_to_eval",
         type=int,
@@ -171,7 +188,11 @@ def main():
         help="Checkpoint step to evaluate; forwarded to the example script (default: 118)",
     )
     # Any additional args after '--' will be forwarded verbatim to the eval script
-    parser.add_argument("pass_through", nargs=argparse.REMAINDER, help="Arguments to pass through to the eval script (e.g. --checkpoint_to_eval 118)")
+    parser.add_argument(
+        "pass_through",
+        nargs=argparse.REMAINDER,
+        help="Arguments to pass through to the eval script (e.g. --checkpoint_to_eval 118)",
+    )
 
     args = parser.parse_args()
 
@@ -185,14 +206,18 @@ def main():
 
     # Ensure a checkpoint is specified unless already provided via pass-through
     has_checkpoint_to_eval = any(
-        (arg == "--checkpoint_to_eval") or arg.startswith("--checkpoint_to_eval=") for arg in pass_args
+        (arg == "--checkpoint_to_eval") or arg.startswith("--checkpoint_to_eval=")
+        for arg in pass_args
     )
     if not has_checkpoint_to_eval:
         pass_args += ["--checkpoint_to_eval", str(args.checkpoint_to_eval)]
 
     # Ensure default example script exists
     if not default_example_script.exists():
-        print(f"Default example script not found: {default_example_script}", file=sys.stderr)
+        print(
+            f"Default example script not found: {default_example_script}",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     seed_dirs = find_checkpoint_dirs(checkpoints_root)
@@ -248,14 +273,18 @@ def main():
 
         # If base step was -1, override pass-through args to pin the resolved step
         per_seed_pass_args = (
-            pass_args if base_checkpoint_step >= 0 else override_checkpoint_arg(pass_args, actual_step)
+            pass_args
+            if base_checkpoint_step >= 0
+            else override_checkpoint_arg(pass_args, actual_step)
         )
 
         rc = run_eval(example_script, seed_dir, per_seed_pass_args)
 
         # The example scripts save to results/<run>/<seed>/results.npz by default.
         # Move it into the checkpoint subdirectory if present.
-        flat_results_npz = Path(str(seed_dir).replace("checkpoints", "results", 1)) / "results.npz"
+        flat_results_npz = (
+            Path(str(seed_dir).replace("checkpoints", "results", 1)) / "results.npz"
+        )
         if rc == 0:
             if flat_results_npz.exists():
                 try:

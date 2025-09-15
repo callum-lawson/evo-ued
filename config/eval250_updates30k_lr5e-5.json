@@ -1,0 +1,27 @@
+{
+  "checkpoint": 118,
+  "output": "results/combined/eval250_updates30k_lr5e-5.parquet",
+  "groups": {
+    "DR (baseline)": [
+      "dr_baseline_eval250_seed0_lr5e-5_30000c",
+      "dr_baseline_eval250_seed1_lr5e-5_30000c",
+      "dr_baseline_eval250_seed2_lr5e-5_30000c",
+      "dr_baseline_eval250_seed3_lr5e-5_30000c",
+      "dr_baseline_eval250_seed4_lr5e-5_30000c"
+    ],
+    "DR (evolutionary)": [
+      "dr_softmin_eval250_seed0_lr5e-5_30000c",
+      "dr_softmin_eval250_seed1_lr5e-5_30000c",
+      "dr_softmin_eval250_seed2_lr5e-5_30000c",
+      "dr_softmin_eval250_seed3_lr5e-5_30000c",
+      "dr_softmin_eval250_seed4_lr5e-5_30000c"
+    ],
+    "ACCEL": [
+      "accel_eval250_seed0_lr5e-5_30000c",
+      "accel_eval250_seed1_lr5e-5_30000c",
+      "accel_eval250_seed2_lr5e-5_30000c",
+      "accel_eval250_seed3_lr5e-5_30000c",
+      "accel_eval250_seed4_lr5e-5_30000c"
+    ]
+  }
+}

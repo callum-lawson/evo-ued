@@ -53,3 +53,6 @@ examples = [
 Homepage = "https://github.com/dramacow/jaxued"
 Issues = "https://github.com/dramacow/jaxued/issues"
 
+[tool.black]
+include = 'scripts/.*\.py$'
+

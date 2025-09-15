@@ -1,6 +1,6 @@
 {
   "checkpoint": 198,
-  "output": "results/combined/dr-softmin_negmean_accel_50k.parquet",
+  "output": "results/combined/eval250_updates50k_lr1e-4.parquet",
   "groups": {
     "DR-Baseline": [
       "dr_baseline_eval250_seed5_50000a",
