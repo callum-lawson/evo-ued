@@ -361,6 +361,30 @@ def _process_run_df(
     )
 
 
+def _process_run_df_multi(
+    df: pd.DataFrame,
+    run_id: str,
+    group_label: str,
+    step_key: str,
+    metric_keys: Sequence[str],
+) -> Optional[pd.DataFrame]:
+    """Normalize a run's history with multiple metrics into long form.
+
+    Returns a DataFrame with columns [step_key, metric, value, run_id, group]
+    or None if required columns are missing.
+    """
+    step_col = _choose_step_key(df.columns, step_key)
+    if step_col is None:
+        return None
+    present_metrics: List[str] = [m for m in metric_keys if m in df.columns]
+    if not present_metrics:
+        return None
+    wide = df[[step_col] + present_metrics].copy()
+    long = wide.melt(id_vars=[step_col], var_name="metric", value_name="value")
+    long = long.dropna(subset=["value"]).rename({step_col: step_key}, axis=1)
+    return long.assign(run_id=run_id, group=group_label)
+
+
 def _fetch_history_with_retry(
     client: WandbDataClient,
     run_id: str,
@@ -429,6 +453,52 @@ def _collect_from_runs(
         return pd.DataFrame(
             {
                 step_key: pd.Series(dtype="float64"),
+                "value": pd.Series(dtype="float64"),
+                "run_id": pd.Series(dtype="object"),
+                "group": pd.Series(dtype="object"),
+            }
+        )
+    return pd.concat(frames, ignore_index=True)
+
+
+def _collect_from_runs_multi(
+    client: WandbDataClient,
+    runs_and_labels: Sequence[Tuple[Any, str]],
+    step_key: str,
+    metric_keys: Sequence[str],
+    *,
+    samples: Optional[int],
+    max_rows: Optional[int],
+    refresh: bool = False,
+) -> pd.DataFrame:
+    """Collect multiple metrics per run and return long-form rows per metric.
+
+    Output columns: [step_key, metric, value, run_id, group]
+    """
+    frames: List[pd.DataFrame] = []
+    # Fetch a superset once per run
+    keys = [step_key] + list(dict.fromkeys(metric_keys))
+    for run, label in runs_and_labels:
+        run_id = getattr(run, "id", str(run))
+        df = _fetch_history_with_retry(
+            client,
+            run_id,
+            keys,
+            samples=samples,
+            max_rows=max_rows,
+            refresh=refresh,
+        )
+        if df is None:
+            continue
+        slim = _process_run_df_multi(df, run_id, label, step_key, metric_keys)
+        if slim is not None:
+            frames.append(slim)
+
+    if not frames:
+        return pd.DataFrame(
+            {
+                step_key: pd.Series(dtype="float64"),
+                "metric": pd.Series(dtype="object"),
                 "value": pd.Series(dtype="float64"),
                 "run_id": pd.Series(dtype="object"),
                 "group": pd.Series(dtype="object"),
@@ -640,6 +710,44 @@ def collect_histories_from_run_mapping(
         chosen,
         step_key,
         metric_key,
+        samples=samples,
+        max_rows=max_rows,
+        refresh=refresh,
+    )
+
+
+# New: multi-metric variant
+def collect_multi_histories_from_run_mapping(
+    entity: str,
+    project: str,
+    runname_to_group: Dict[str, str],
+    *,
+    step_key: str,
+    metric_keys: Sequence[str],
+    samples: Optional[int] = None,
+    max_rows: Optional[int] = None,
+    use_cache: bool = True,
+    refresh: bool = False,
+    cache_ttl_seconds: int = 6 * 60 * 60,
+) -> pd.DataFrame:
+    """Collect histories for multiple metrics per mapped run.
+
+    Returns columns: [step_key, metric, value, run_id, group].
+    """
+    client = WandbDataClient(
+        entity,
+        project,
+        cache_ttl_seconds=cache_ttl_seconds,
+        use_cache=use_cache,
+    )
+
+    chosen = _select_runs_by_mapping(client, runname_to_group, step_key)
+
+    return _collect_from_runs_multi(
+        client,
+        chosen,
+        step_key,
+        metric_keys,
         samples=samples,
         max_rows=max_rows,
         refresh=refresh,
