@@ -64,11 +64,16 @@ from .utils_wandb import (
 # ------------------------------ Per-run/per-maze tables ------------------------------
 
 
-def final_values_per_run(df: pd.DataFrame, step_key: str) -> pd.DataFrame:
+def final_values_per_run(
+    df: pd.DataFrame,
+    step_key: str,
+    *,
+    extra_cols: Optional[Sequence[str]] = None,
+) -> pd.DataFrame:
     """Return one row per run with the final value at the max step.
 
-    Input columns: [step_key, value, run_id, group]. Output columns:
-    [group, run_id, step, value].
+    Input columns: [step_key, value, run_id, group] (+ optional extras).
+    Output columns: [group, run_id, step, value] (+ extras if requested).
     """
     if df is None or df.empty:
         return pd.DataFrame(
@@ -82,8 +87,14 @@ def final_values_per_run(df: pd.DataFrame, step_key: str) -> pd.DataFrame:
 
     sorted_df = df.sort_values(by=["run_id", step_key])
     idx = sorted_df.groupby("run_id")[step_key].idxmax()
+    base_cols = ["group", "run_id", step_key, "value"]
+    cols: List[str] = base_cols
+    if extra_cols:
+        # Keep only extras that are present to avoid KeyError
+        extras_present = [c for c in extra_cols if c in sorted_df.columns]
+        cols = base_cols + extras_present
     per_run = (
-        sorted_df.loc[idx, ["group", "run_id", step_key, "value"]]
+        sorted_df.loc[idx, cols]
         .rename(columns={step_key: "step"})
         .reset_index(drop=True)
     )

@@ -317,6 +317,9 @@ class HistoryCollectionConfig:
     use_cache: bool = True
     refresh: bool = False
     cache_ttl_seconds: int = 6 * 60 * 60
+    # Optional: attach selected run metadata (from config/summary) to each row
+    attach_config_keys: Optional[Sequence[str]] = None
+    attach_summary_keys: Optional[Sequence[str]] = None
 
 
 def _choose_step_key(columns: Any, preferred: str) -> Optional[str]:
@@ -420,6 +423,57 @@ def _fetch_history_with_retry(
         return None
 
 
+def _fetch_run_with_retry(
+    client: WandbDataClient,
+    run_id: str,
+    keys: Sequence[str],
+    *,
+    samples: Optional[int],
+    max_rows: Optional[int],
+    refresh: bool = False,
+) -> Optional[RunData]:
+    """Fetch full RunData with retry (config, summary, history)."""
+    try:
+        data = client.fetch_run_data(
+            run_id,
+            keys=keys,
+            samples=samples,
+            max_rows=max_rows,
+            refresh=refresh,
+        )
+        return data
+    except Exception:
+        if not refresh:
+            try:
+                data = client.fetch_run_data(
+                    run_id,
+                    keys=keys,
+                    samples=samples,
+                    max_rows=max_rows,
+                    refresh=True,
+                )
+                return data
+            except Exception:
+                return None
+        return None
+
+
+def _get_nested(dct: Dict[str, Any], dotted_key: str) -> Any:
+    """Safely get nested dict value using dot-separated key.
+
+    Returns None if any part is missing or not a mapping.
+    """
+    cur: Any = dct
+    for part in str(dotted_key).split("."):
+        try:
+            if not isinstance(cur, dict) or part not in cur:
+                return None
+            cur = cur[part]
+        except Exception:
+            return None
+    return cur
+
+
 def _collect_from_runs(
     client: WandbDataClient,
     runs_and_labels: Sequence[Tuple[Any, str]],
@@ -429,35 +483,74 @@ def _collect_from_runs(
     samples: Optional[int],
     max_rows: Optional[int],
     refresh: bool = False,
+    attach_config_keys: Optional[Sequence[str]] = None,
+    attach_summary_keys: Optional[Sequence[str]] = None,
 ) -> pd.DataFrame:
     """Shared collection path for any iterable of (run, group_label)."""
     frames: List[pd.DataFrame] = []
     keys = [step_key, metric_key]
     for run, label in runs_and_labels:
         run_id = getattr(run, "id", str(run))
-        df = _fetch_history_with_retry(
-            client,
-            run_id,
-            keys,
-            samples=samples,
-            max_rows=max_rows,
-            refresh=refresh,
-        )
-        if df is None:
-            continue
-        slim = _process_run_df(df, run_id, label, step_key, metric_key)
+        want_meta = bool(attach_config_keys) or bool(attach_summary_keys)
+        if want_meta:
+            rd = _fetch_run_with_retry(
+                client,
+                run_id,
+                keys,
+                samples=samples,
+                max_rows=max_rows,
+                refresh=refresh,
+            )
+            if rd is None:
+                continue
+            df = rd.history_df
+            slim = _process_run_df(df, run_id, label, step_key, metric_key)
+            if slim is not None:
+                meta: Dict[str, Any] = {}
+                if attach_config_keys:
+                    for k in attach_config_keys:
+                        meta[str(k)] = _to_jsonable(_get_nested(rd.config, str(k)))
+                if attach_summary_keys:
+                    for k in attach_summary_keys:
+                        meta[f"summary.{k}"] = _to_jsonable(
+                            _get_nested(rd.summary, str(k))
+                        )
+                if meta:
+                    try:
+                        slim = slim.assign(**meta)
+                    except Exception:
+                        # Fallback: ensure all meta values are present
+                        for mk, mv in meta.items():
+                            slim[mk] = mv
+        else:
+            df = _fetch_history_with_retry(
+                client,
+                run_id,
+                keys,
+                samples=samples,
+                max_rows=max_rows,
+                refresh=refresh,
+            )
+            if df is None:
+                continue
+            slim = _process_run_df(df, run_id, label, step_key, metric_key)
         if slim is not None:
             frames.append(slim)
 
     if not frames:
-        return pd.DataFrame(
-            {
-                step_key: pd.Series(dtype="float64"),
-                "value": pd.Series(dtype="float64"),
-                "run_id": pd.Series(dtype="object"),
-                "group": pd.Series(dtype="object"),
-            }
-        )
+        base: Dict[str, Any] = {
+            step_key: pd.Series(dtype="float64"),
+            "value": pd.Series(dtype="float64"),
+            "run_id": pd.Series(dtype="object"),
+            "group": pd.Series(dtype="object"),
+        }
+        if attach_config_keys:
+            for k in attach_config_keys:
+                base[str(k)] = pd.Series(dtype="object")
+        if attach_summary_keys:
+            for k in attach_summary_keys:
+                base[f"summary.{k}"] = pd.Series(dtype="object")
+        return pd.DataFrame(base)
     return pd.concat(frames, ignore_index=True)
 
 
@@ -470,6 +563,8 @@ def _collect_from_runs_multi(
     samples: Optional[int],
     max_rows: Optional[int],
     refresh: bool = False,
+    attach_config_keys: Optional[Sequence[str]] = None,
+    attach_summary_keys: Optional[Sequence[str]] = None,
 ) -> pd.DataFrame:
     """Collect multiple metrics per run and return long-form rows per metric.
 
@@ -480,30 +575,66 @@ def _collect_from_runs_multi(
     keys = [step_key] + list(dict.fromkeys(metric_keys))
     for run, label in runs_and_labels:
         run_id = getattr(run, "id", str(run))
-        df = _fetch_history_with_retry(
-            client,
-            run_id,
-            keys,
-            samples=samples,
-            max_rows=max_rows,
-            refresh=refresh,
-        )
-        if df is None:
-            continue
-        slim = _process_run_df_multi(df, run_id, label, step_key, metric_keys)
+        want_meta = bool(attach_config_keys) or bool(attach_summary_keys)
+        if want_meta:
+            rd = _fetch_run_with_retry(
+                client,
+                run_id,
+                keys,
+                samples=samples,
+                max_rows=max_rows,
+                refresh=refresh,
+            )
+            if rd is None:
+                continue
+            df = rd.history_df
+            slim = _process_run_df_multi(df, run_id, label, step_key, metric_keys)
+            if slim is not None:
+                meta: Dict[str, Any] = {}
+                if attach_config_keys:
+                    for k in attach_config_keys:
+                        meta[str(k)] = _to_jsonable(_get_nested(rd.config, str(k)))
+                if attach_summary_keys:
+                    for k in attach_summary_keys:
+                        meta[f"summary.{k}"] = _to_jsonable(
+                            _get_nested(rd.summary, str(k))
+                        )
+                if meta:
+                    try:
+                        slim = slim.assign(**meta)
+                    except Exception:
+                        for mk, mv in meta.items():
+                            slim[mk] = mv
+        else:
+            df = _fetch_history_with_retry(
+                client,
+                run_id,
+                keys,
+                samples=samples,
+                max_rows=max_rows,
+                refresh=refresh,
+            )
+            if df is None:
+                continue
+            slim = _process_run_df_multi(df, run_id, label, step_key, metric_keys)
         if slim is not None:
             frames.append(slim)
 
     if not frames:
-        return pd.DataFrame(
-            {
-                step_key: pd.Series(dtype="float64"),
-                "metric": pd.Series(dtype="object"),
-                "value": pd.Series(dtype="float64"),
-                "run_id": pd.Series(dtype="object"),
-                "group": pd.Series(dtype="object"),
-            }
-        )
+        base: Dict[str, Any] = {
+            step_key: pd.Series(dtype="float64"),
+            "metric": pd.Series(dtype="object"),
+            "value": pd.Series(dtype="float64"),
+            "run_id": pd.Series(dtype="object"),
+            "group": pd.Series(dtype="object"),
+        }
+        if attach_config_keys:
+            for k in attach_config_keys:
+                base[str(k)] = pd.Series(dtype="object")
+        if attach_summary_keys:
+            for k in attach_summary_keys:
+                base[f"summary.{k}"] = pd.Series(dtype="object")
+        return pd.DataFrame(base)
     return pd.concat(frames, ignore_index=True)
 
 
@@ -554,6 +685,8 @@ def collect_histories(cfg: HistoryCollectionConfig) -> pd.DataFrame:
         samples=cfg.samples,
         max_rows=cfg.max_rows,
         refresh=cfg.refresh,
+        attach_config_keys=cfg.attach_config_keys,
+        attach_summary_keys=cfg.attach_summary_keys,
     )
 
 
@@ -694,8 +827,18 @@ def collect_histories_from_run_mapping(
     use_cache: bool = True,
     refresh: bool = False,
     cache_ttl_seconds: int = 6 * 60 * 60,
+    attach_config_keys: Optional[Sequence[str]] = None,
+    attach_summary_keys: Optional[Sequence[str]] = None,
 ) -> pd.DataFrame:
-    """Collect histories by mapping specific run identifiers to custom groups."""
+    """Collect histories by mapping specific run identifiers to custom groups.
+
+    This variant fetches ONE metric per run.
+
+    - Inputs: step_key, metric_key (str)
+    - Output columns: [step_key, value, run_id, group] plus any attached
+      metadata columns provided via attach_config_keys / attach_summary_keys
+    - Use when you only need a single metric per run (lighter and simpler)
+    """
     client = WandbDataClient(
         entity,
         project,
@@ -713,6 +856,8 @@ def collect_histories_from_run_mapping(
         samples=samples,
         max_rows=max_rows,
         refresh=refresh,
+        attach_config_keys=attach_config_keys,
+        attach_summary_keys=attach_summary_keys,
     )
 
 
@@ -729,10 +874,18 @@ def collect_multi_histories_from_run_mapping(
     use_cache: bool = True,
     refresh: bool = False,
     cache_ttl_seconds: int = 6 * 60 * 60,
+    attach_config_keys: Optional[Sequence[str]] = None,
+    attach_summary_keys: Optional[Sequence[str]] = None,
 ) -> pd.DataFrame:
-    """Collect histories for multiple metrics per mapped run.
+    """Collect histories for multiple metrics per mapped run in one pass.
 
-    Returns columns: [step_key, metric, value, run_id, group].
+    This variant fetches MANY metrics per run and returns a long-form DataFrame
+    with one row per (step, metric).
+
+    - Inputs: step_key, metric_keys (Sequence[str])
+    - Output columns: [step_key, metric, value, run_id, group] plus any attached
+      metadata columns provided via attach_config_keys / attach_summary_keys
+    - Use when you want multiple metrics available for downstream subsetting
     """
     client = WandbDataClient(
         entity,
@@ -751,6 +904,8 @@ def collect_multi_histories_from_run_mapping(
         samples=samples,
         max_rows=max_rows,
         refresh=refresh,
+        attach_config_keys=attach_config_keys,
+        attach_summary_keys=attach_summary_keys,
     )
 
 
