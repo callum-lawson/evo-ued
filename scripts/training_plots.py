@@ -89,6 +89,126 @@ def plot_training_runs(
     return ax
 
 
+# -------------------------- Hyperparameter sweeps --------------------------
+
+
+def plot_hyperparam_vs_value(
+    df: pd.DataFrame,
+    hp_col: str = "lr",
+    value_col: str = "value",
+    *,
+    groups: Optional[Sequence[str]] = None,
+    ax=None,
+    log_x: bool = True,
+    label_fmt: str = "{group}",
+    palette_map: Optional[dict[str, Any]] = None,
+    y_label: Optional[str] = None,
+    x_label: Optional[str] = None,
+):
+    """Plot value vs a hyperparameter (e.g., learning rate) per algorithm group.
+
+    - Uses the same consistent colors as other plots via make_algorithm_palette
+    - If multiple rows exist for a given (group, hp_col), aggregates by median
+      and prints a message.
+    - By default, uses a log scale on the x-axis for learning rates.
+    """
+    import matplotlib.pyplot as plt
+
+    required = {"group", hp_col, value_col}
+    missing = [c for c in required if c not in df.columns]
+    if missing:
+        _, ax = plt.subplots(figsize=(6, 3))
+        ax.text(0.5, 0.5, f"Missing columns: {missing}", ha="center", va="center")
+        ax.set_axis_off()
+        return ax
+
+    work = df[["group", hp_col, value_col]].dropna().copy()
+    # Coerce hyperparameter to numeric (e.g., if stored as string)
+    work[hp_col] = pd.to_numeric(work[hp_col], errors="coerce")
+    work = work.dropna(subset=[hp_col, value_col])
+
+    # Aggregate duplicates by median and track counts
+    agg = (
+        work.groupby(["group", hp_col])[value_col]
+        .agg(["median", "count"])  # type: ignore[arg-type]
+        .reset_index()
+        .rename(columns={"median": value_col})
+    )
+    duplicated = agg[agg["count"] > 1]
+    if not duplicated.empty:
+        print(
+            f"Multiple values per ({hp_col}, group) detected; using median per pair. "
+            f"Aggregated {int(duplicated.shape[0])} pairs."
+        )
+
+    if ax is None:
+        _, ax = plt.subplots(figsize=(7, 4))
+
+    groups_to_plot = (
+        list(groups) if groups is not None else sorted(agg["group"].unique())
+    )
+    # Build a palette if not provided
+    if palette_map is None:
+        try:
+            palette_map = make_algorithm_palette(groups_to_plot)
+        except Exception:
+            palette_map = {g: None for g in groups_to_plot}
+
+    any_plotted = False
+    for g in groups_to_plot:
+        gdf = agg[agg["group"] == g].copy()
+        if gdf.empty:
+            continue
+        gdf = gdf.sort_values(by=hp_col)
+        color_kwargs = {}
+        if palette_map is not None and g in palette_map:
+            color_kwargs = {"color": palette_map[g]}
+        # Line + markers to emphasize discrete hp points
+        ax.plot(
+            gdf[hp_col],
+            gdf[value_col],
+            marker="o",
+            label=label_fmt.format(group=g),
+            **color_kwargs,
+        )
+        any_plotted = True
+
+    # Configure x-axis ticks at regular intervals with readable labels
+    try:
+        if log_x:
+            import numpy as np  # type: ignore
+            from math import floor, ceil, log10
+            from matplotlib.ticker import LogLocator, LogFormatterMathtext  # type: ignore
+
+            ax.set_xscale("log")
+
+            # Set limits to neat decades that span the data (simple and robust)
+            vals = agg[hp_col].to_numpy(dtype=float)
+            vmin = float(np.nanmin(vals))
+            vmax = float(np.nanmax(vals))
+            if vmin > 0 and vmax > 0 and np.isfinite(vmin) and np.isfinite(vmax):
+                emin = floor(log10(vmin))
+                emax = ceil(log10(vmax))
+                ax.set_xlim(10**emin, 10**emax)
+
+            # Decade ticks with clean 10^n labels; let Matplotlib handle spacing
+            ax.xaxis.set_major_locator(LogLocator(base=10.0))
+            ax.xaxis.set_major_formatter(LogFormatterMathtext(base=10.0))
+        else:
+            from matplotlib.ticker import MaxNLocator, ScalarFormatter  # type: ignore
+
+            ax.xaxis.set_major_locator(MaxNLocator(nbins=6, min_n_ticks=4))
+            ax.xaxis.set_major_formatter(ScalarFormatter(useMathText=True))
+    except Exception:
+        pass
+
+    ax.set_xlabel(x_label if x_label is not None else hp_col)
+    ax.set_ylabel(y_label if y_label is not None else value_col)
+    if any_plotted:
+        ax.legend()
+    return ax
+
+
 # -------------------------- Maze algorithm bars --------------------------
 
 
