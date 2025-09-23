@@ -115,15 +115,74 @@ class PerformanceBuildConfig:
 
 
 def _is_maze_metric_column(column: str, prefix: str) -> bool:
-    if not column.startswith(prefix):
+    """Return True if the column represents a per-maze metric under prefix.
+
+    This is robust to nested keys such as "eval/solve_rate/<maze>[/mean]" by
+    matching on the last occurrence of the prefix rather than only at the start.
+    """
+    prefix_alt = prefix.replace("/", ".") if "/" in prefix else prefix.replace(".", "/")
+    if prefix not in column and prefix_alt not in column:
         return False
-    tail = column[len(prefix) :]
+
+    # Extract the tail after the last occurrence of the prefix
+    if prefix in column:
+        last_idx = column.rfind(prefix)
+        tail = column[last_idx + len(prefix) :]
+    else:
+        # Fall back to alt form
+        last_idx = column.rfind(prefix_alt)
+        tail = column[last_idx + len(prefix_alt) :]
+
+    # Normalize delimiters to '/' and drop trailing reducers like '/mean'
     bad_suffixes = {"mean", "median", "std", "min", "max", "p25", "p75"}
-    if tail in bad_suffixes:
+    tail_norm = tail.replace(".", "/")
+    if "/" in tail_norm:
+        parts = tail_norm.split("/")
+        if parts and parts[-1] in bad_suffixes:
+            parts = parts[:-1]
+        tail_norm = "/".join(parts)
+
+    if not tail_norm or tail_norm in bad_suffixes:
         return False
-    if any(s in tail.lower() for s in ("smooth", "ewm", "ema")):
+
+    # Exclude smoothed versions
+    if any(s in tail_norm.lower() for s in ("smooth", "ewm", "ema")):
         return False
     return True
+
+
+def _maze_from_metric_column(column: str, prefix: str) -> Optional[str]:
+    """Extract the maze name from a metric column, handling nested prefixes.
+
+    Examples:
+      - column: "solve_rate/mazeA" => "mazeA"
+      - column: "eval/solve_rate/mazeA/mean" => "mazeA"
+    Returns None if the column does not correspond to a per-maze metric.
+    """
+    prefix_alt = prefix.replace("/", ".") if "/" in prefix else prefix.replace(".", "/")
+    if prefix not in column and prefix_alt not in column:
+        return None
+    if prefix in column:
+        last_idx = column.rfind(prefix)
+        tail = column[last_idx + len(prefix) :]
+    else:
+        last_idx = column.rfind(prefix_alt)
+        tail = column[last_idx + len(prefix_alt) :]
+    if not tail:
+        return None
+    # Normalize delimiters and strip trailing reducers like '/mean'
+    tail_norm = tail.replace(".", "/")
+    parts = tail_norm.split("/")
+    bad_suffixes = {"mean", "median", "std", "min", "max", "p25", "p75"}
+    if parts and parts[-1] in bad_suffixes:
+        parts = parts[:-1]
+    maze = "/".join(p for p in parts if p)
+    if not maze:
+        return None
+    # Filter smoothed variants
+    if any(s in maze.lower() for s in ("smooth", "ewm", "ema")):
+        return None
+    return maze
 
 
 def _value_at_step(
@@ -250,10 +309,14 @@ def build_performance_table(cfg: PerformanceBuildConfig) -> pd.DataFrame:
         step_col = _choose_step_key(df.columns, cfg.step_key)
         if step_col is None:
             continue
-        maze_cols = [
-            c for c in df.columns if _is_maze_metric_column(c, cfg.metric_prefix)
-        ]
-        if not maze_cols:
+        # Identify per-maze metric columns and extract maze names robustly
+        col_maze_pairs = []
+        for c in df.columns:
+            if _is_maze_metric_column(c, cfg.metric_prefix):
+                maze_name = _maze_from_metric_column(c, cfg.metric_prefix)
+                if maze_name:
+                    col_maze_pairs.append((c, maze_name))
+        if not col_maze_pairs:
             continue
 
         at_step = cfg.at_step
@@ -263,13 +326,12 @@ def build_performance_table(cfg: PerformanceBuildConfig) -> pd.DataFrame:
 
         rname = _extract_original_name(rd.run) or rd.run.id
 
-        for col in maze_cols:
+        for col, maze in col_maze_pairs:
             val = _value_at_step(df, step_col, col, at_step)
             if val is None or (
                 isinstance(val, float) and (math.isnan(val) or math.isinf(val))
             ):
                 continue
-            maze = col[len(cfg.metric_prefix) :]
             rows.append(
                 {
                     "group": label,
@@ -355,10 +417,10 @@ def compute_maze_similarity_per_algorithm(
         )
         pivot = pivot.dropna(axis=1, how="all")
         if pivot.shape[0] < 2 or pivot.shape[1] < 2:
-            result[algo] = pd.DataFrame()
+            result[str(algo)] = pd.DataFrame()
             continue
         corr = pivot.corr(method=method)  # type: ignore[arg-type]
-        result[algo] = corr
+        result[str(algo)] = corr
     return result
 
 
@@ -404,6 +466,64 @@ def compute_algorithm_similarity(
     if mat.shape[1] < 2 or mat.shape[0] < 2:
         return pd.DataFrame()
     return mat.transpose().corr(method=method)  # type: ignore[arg-type]
+
+
+def smooth_ewm(
+    df: pd.DataFrame,
+    step_key: str,
+    *,
+    span: float = 50.0,
+    adjust: bool = False,
+    by: Optional[Sequence[str]] = ("group", "run_id"),
+    value_col: str = "value",
+    output_col: str = "value",
+) -> pd.DataFrame:
+    """Apply exponentially weighted moving average smoothing.
+
+    Args:
+        df: Long-form history with at least [value_col, step_key].
+        step_key: Name of the step column, e.g. "num_updates".
+        span: EWM span parameter (larger => smoother).
+        adjust: Passed to pandas ewm().
+        by: Columns to group by before smoothing. Use None to smooth globally.
+        value_col: Column to smooth.
+        output_col: Column to write smoothed values to (defaults to overwrite).
+
+    Returns:
+        DataFrame with smoothed series in output_col.
+    """
+    if df is None or df.empty:
+        return df
+
+    if by is None or len(by) == 0:
+        groups = [()]  # single global group
+        grouped = [((), df)]
+    else:
+        groups = list(by)
+        grouped = df.groupby(list(by), dropna=False)
+
+    def _smooth(sub: pd.DataFrame) -> pd.DataFrame:
+        if sub.empty:
+            return sub
+        sub_sorted = sub.sort_values(by=[step_key])
+        smoothed = (
+            pd.Series(sub_sorted[value_col].to_numpy(dtype=float))
+            .ewm(span=span, adjust=adjust)
+            .mean()
+        )
+        sub_sorted = sub_sorted.copy()
+        sub_sorted[output_col] = smoothed.to_numpy()
+        return sub_sorted
+
+    if groups == [()]:
+        return _smooth(df)
+
+    parts: List[pd.DataFrame] = []
+    for _, sub in grouped:
+        parts.append(_smooth(sub))
+    out = pd.concat(parts, axis=0, ignore_index=False)
+    # Preserve original column order where possible
+    return out.sort_index()
 
 
 __all__ = [

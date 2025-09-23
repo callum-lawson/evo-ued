@@ -260,8 +260,9 @@ class WandbDataClient:
         refresh: bool,
     ) -> "Any":
         selector = [] if not keys else list(keys)
+        hashed_samples = "all" if samples is None else str(samples)
         hashed = _hash_parts(
-            ["all" if not selector else ",".join(sorted(selector)), str(samples)]
+            ["all" if not selector else ",".join(sorted(selector)), hashed_samples]
         )
         parquet_path = self._run_cache_dir(key) / f"history_{hashed}.parquet"
         csv_path = self._run_cache_dir(key) / f"history_{hashed}.csv"
@@ -276,7 +277,7 @@ class WandbDataClient:
             return pd.read_csv(csv_path)
 
         # Fetch from API
-        df = run.history(keys=list(keys) if keys else None, samples=samples or 0)
+        df = run.history(keys=list(keys) if keys else None, samples=samples)
 
         # Prefer parquet if fastparquet/pyarrow is available, otherwise CSV
         try:
