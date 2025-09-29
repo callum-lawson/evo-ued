@@ -31,8 +31,8 @@ from jaxued.utils import (
     compute_max_returns,
     max_mc,
     positive_value_loss,
-    negative_mean_reward,
 )
+from evo_ued.utils import negative_mean_reward
 from jaxued.wrappers import AutoReplayWrapper
 import chex
 from enum import IntEnum

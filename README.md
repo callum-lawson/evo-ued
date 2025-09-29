@@ -1,7 +1,4 @@
-# Welcome to JaxUED!
-<p align="center">
-<a href="#get-started">Get Started</a> &mdash; <a href="https://arxiv.org/abs/2403.13091">Paper</a> &mdash; <a href="https://dramacow.github.io/jaxued/">Docs</a>
-</p>
+# Evo‑UED (built on JaxUED)
 
 <div align="center">
     <img src="figures/Labyrinth_299.gif" >
@@ -15,144 +12,103 @@
     <img src="figures/LabyrinthFlipped_299.gif">
 </div>
 
-JaxUED is a Unsupervised Environment Design (UED) library with similar goals to [CleanRL](https://docs.cleanrl.dev): high-quality, single-file and understandable implementations of common UED methods.
+This repo contains our research‑specific additions on top of upstream JaxUED. We keep the repo small by:
+- importing everything from upstream `jaxued`, and
+- shipping only our changes in a tiny overlay module `evo_ued` plus scripts/configs for results.
 
-## Why JaxUED?
-- Single-file reference implementations of common-UED algorithms
-- Allows easy modification and quick prototyping of ideas
-- Understandable code with low levels of obscurity/abstraction
-- Wandb integration and logging of metrics and generated levels
+What you get here is the minimum needed to reproduce our experiments and analysis.
 
-### What We Provide
-JaxUED has several (Jaxified) utilities that are useful for implementing UED methods, a `LevelSampler`, a general environment interface `UnderspecifiedEnv`, and a Maze implementation. 
+### What’s new (vs upstream)
+- **Score function**: `evo_ued.utils.negative_mean_reward`
+  - Computes the time‑averaged reward per level over completed episodes, standardizes across the batch (z‑score), and returns the negative z‑score. Higher scores ≈ harder levels (lower rewards).
+- **Result pipelines** for sweeps and checkpoint evaluation:
+  - `scripts/extract_checkpoint_results.py` → convert each `results.npz` to a tidy Parquet table.
+  - `scripts/combine_checkpoint_results.py` → combine many Parquet files using simple JSON configs in `config/` (grouped by algorithm/run names, optional checkpoint).
+- **Configs**: ready‑to‑use JSONs in `config/` for 30k/50k steps and LR sweeps (e.g., `updates30k_lr_sweep.json`).
+- **Examples**: Maze examples only. Craftax/Gymnax examples live upstream and are removed here to avoid drift.
+- **Overlay only**: no vendored `src/jaxued`. We install upstream as a dependency and keep our changes isolated.
 
-We also have understandable single-file implementations of DR, PLR, ACCEL and PAIRED.
+## Quickstart
 
-### Who JaxUED is for
-JaxUED is primarily intended for researchers looking to get *in the weeds* of UED algorithm development. Our minimal dependency implementations of the current state-of-the art UED methods expose all implementation details; helping researchers understand how the algorithms work in practise, and facilitating easy, rapid prototyping of new ideas. 
-
-## Get Started
-See the [docs](https://dramacow.github.io/jaxued/) for more examples and [explanations of arguments](https://dramacow.github.io/jaxued/maze_dr/), or simply read the documented code in `examples/`
-### Installation
-
-To install the core package:
+1) Get upstream code (submodule) and install:
 ```bash
-pip install jaxued
+git submodule update --init --recursive
+python -m pip install -e third_party/jaxued
 ```
-To install optional dependencies required for the example scripts (found in the examples/ directory):
+
+2) Make your overlay importable (no install needed):
 ```bash
-pip install "jaxued[examples]"
+export PYTHONPATH=$PWD/src:$PYTHONPATH
 ```
 
-Follow instructions [here](https://jax.readthedocs.io/en/latest/installation.html) for jax GPU installation, and run something like the following 
-```
-pip install --upgrade "jax[cuda12_pip]" -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
-```
-
-### Training
-We provide three example files, `examples/maze_{dr,plr,paired}.py` implementing DR, PLR (and ACCEL) & PAIRED, respectively.
-
-To run them, simply run the scripts directly. See the [documentation](https://dramacow.github.io/jaxued/) or the files themselves for arguments.
-
+3) Minimal run (maze, PLR‑style with our score):
 ```bash
-python examples/maze_plr.py
+PYTHONPATH=src WANDB_MODE=disabled \
+python examples/maze_plr_egt.py \
+  --num_updates 1 --num_steps 8 --num_train_envs 2 --num_minibatches 1 --epoch_ppo 1 \
+  --score_function neg_mean_reward --prioritization topk --topk_k 1 \
+  --level_buffer_capacity 8 --replay_prob 0.5 --minimum_fill_ratio 0.0
 ```
 
-### Evaluation
-After the training is completed, it will store checkpoints in `./checkpoints/<run_name>/<seed>/models/<update_step>`, and the same file can be run to evaluate these checkpoints, storing the evaluation results in `./results/`.
-The only things to change are `--mode=eval`, specifying `--checkpoint_directory` and `--checkpoint_to_eval`:
-```
-python examples/maze_plr.py --mode eval --checkpoint_directory=./checkpoints/<run_name>/<seed> --checkpoint_to_eval <update_step>
-```
-
-
-These result files are `npz` files with keys
-```
-states, cum_rewards, episode_lengths, levels
-```
-
-
-## Supported Methods
-| Method                                                                              | Run Command                                                  |
-|-------------------------------------------------------------------------------------|--------------------------------------------------------------|
-| [Domain Randomization (DR)](https://arxiv.org/abs/1703.06907)                       | `python examples/maze_dr.py`                             |
-| [Prioritized Level Replay (PLR)](https://arxiv.org/abs/2010.03934)                  | `python examples/maze_plr.py --exploratory_grad_updates` |
-| [Robust Prioritized Level Replay (RPLR)](https://arxiv.org/abs/2110.02439) | `python examples/maze_plr.py`                            |
-| [ACCEL](https://arxiv.org/abs/2203.01302)                                           | `python examples/maze_plr.py --use_accel`                |
-| [PAIRED](https://arxiv.org/abs/2012.02096)                                          | `python examples/maze_paired.py`                         |
-
-## Modification
-One of the core goals of JaxUED is that our reference implementations can easily be modified to add arbitrary functionality. All of the primary functionality is provided in the file, from the PPO implementation to the specifics of each method. 
-
-So, to get started, simply copy one of the files, and start modifying the file directly.
-
-## New Environments
-To implement a new environment, simply subclass the `UnderspecifiedEnv` interface, and in the files themselves, change
-```python
-    env = Maze(max_height=13, max_width=13, agent_view_size=config["agent_view_size"], normalize_obs=True)
-```
-
-to 
-```
-    env = MyEnv(...)
-```
-
-And make any other changes necessary to the network architecture, etc.
-## Supported Environments
-### Craftax
-`examples/craftax/craftax_plr.py` contains code to run DR, PLR and ACCEL in [Craftax](https://github.com/MichaelTMatthews/Craftax).
-To use Craftax, install it using 
+4) Alternative tiny run (DR):
 ```bash
-pip install git+https://github.com/MichaelTMatthews/Craftax.git@main
+PYTHONPATH=src WANDB_MODE=disabled \
+python examples/maze_dr_egt.py \
+  --num_updates 1 --num_steps 8 --num_train_envs 2 --num_minibatches 1 --epoch_ppo 1
 ```
 
-Run it using the following command (see [here](https://dramacow.github.io/jaxued/craftax/) for the full list of arguments):
+### Using `neg_mean_reward`
+- Enable in `examples/maze_plr_egt.py` via `--score_function neg_mean_reward`.
+- Implementation is in `src/evo_ued/utils.py` and mirrors the logic in our diff (implemented on top of upstream `accumulate_rollout_stats`).
 
+### Extract and combine results
+1) Extract each checkpoint’s `results.npz` into a tidy Parquet file:
+```bash
+python -m scripts.extract_checkpoint_results --results_root ./results --force
 ```
-python examples/craftax/craftax_plr.py --exploratory_grad_updates --num_train_envs 512 --num_updates 256
+
+2) Combine many runs into a single Parquet using a config from `config/`:
+```bash
+python -m scripts.combine_checkpoint_results \
+  --config config/updates30k_lr_sweep.json \
+  --force
 ```
 
-Currently, this only supports CraftaxSymbolic, but the following are coming soon:
-
-- [ ] Support for Pixel Environments
-- [ ] Support for Craftax-Classic
-- [ ] Support for an RNN policy
-
-### Gymnax
-See `examples/gymnax/gymnax_plr.py` to run gymnax environments, currently supporting Acrobot, Pendulum and Cartpole. Use the `--env` flag with the name of the environment in lowercase to choose which is used. We have set the distribution of levels as somewhat arbitrary, changing two of the parameters of each environments (e.g. length and mass in Cartpole). This can easily be changed, however. The evaluation distribution is also somewhat arbitrary and can be easily changed.
-
-The `examples/gymnax/gymnax_plr.py` can be modified to add additional environments as well.
-
-## See Also
-Here are some other libraries that also leverage Jax to obtain massive speedups in RL, which acted as inspiration for JaxUED.
-
-RL Algorithms in Jax
-- [Minimax](https://github.com/facebookresearch/minimax): UED baselines, with support for multi-gpu training, and more parallel versions of PLR/ACCEL
-- [PureJaxRL](https://github.com/luchris429/purejaxrl) End-to-end RL implementations in Jax
-- [JaxIRL](https://github.com/FLAIROx/jaxirl): Inverse RL
-- [Mava](https://github.com/instadeepai/Mava): Multi-Agent RL
-- [JaxMARL](https://github.com/FLAIROx/JaxMARL): Lots of different multi-agent RL algorithms
-
-RL Environments in Jax
-- [Gymnax](https://github.com/RobertTLange/gymnax): Standard RL interface with several environments, such as classic control and MinAtar.
-- [JaxMARL](https://github.com/FLAIROx/JaxMARL): Lots of different multi-agent RL environments
-- [Jumanji](https://github.com/instadeepai/jumanji): Combinatorial Optimisation
-- [Pgx](https://github.com/sotetsuk/pgx): Board games, such as Chess and Go.
-- [Brax](https://github.com/google/brax): Continuous Control (like Mujoco), in Jax
-- [XLand-MiniGrid](https://github.com/corl-team/xland-minigrid): Meta RL environments, taking ideas from XLand and Minigrid
-- [Craftax](https://github.com/MichaelTMatthews/Craftax): Greatly extended version of [Crafter](https://github.com/danijar/crafter) in Jax.
-
-## Projects using JaxUED
-- [Craftax](https://github.com/MichaelTMatthews/Craftax): Using UED to generate worlds for learning an RL agent.
-- [ReMiDi](https://github.com/Michael-Beukman/ReMiDi): JaxUED is the primary library used for baselines and the backbone for implementing ReMiDi.
-
-## 📜 Citation
-For attribution in academic contexts, please cite this work as
-```
-@article{coward2024JaxUED,
-  title={JaxUED: A simple and useable UED library in Jax},
-  author={Samuel Coward and Michael Beukman and Jakob Foerster},
-  journal={arXiv preprint},
-  year={2024},
+Config format (example):
+```json
+{
+  "checkpoint": 118,
+  "output": "results/combined/eval250_updates30k_lr_sweep.parquet",
+  "groups": {
+    "DR (baseline)": ["dr_baseline_eval250_seed0_30000a", "dr_baseline_eval250_seed1_30000a"],
+    "DR (evolutionary)": ["dr_softmin_eval250_seed1_30000a"],
+    "ACCEL": ["accel_eval250_seed1_30000a"]
+  }
 }
 ```
+The combiner searches under:
+- `results/<run>/<seed>/<checkpoint>/results_extracted.parquet` (preferred), or
+- legacy flat locations under `results/<run>/<seed>/`.
+It concatenates all tables and tags each row with `run_name`, `seed`, and `checkpoint`.
+
+### Repo layout (what matters here)
+- `src/evo_ued/` — overlay (currently only `utils.py` with `negative_mean_reward`).
+- `examples/` — Maze examples only: `maze_{dr,plr,paired}.py`, `maze_*_egt.py`.
+- `scripts/` — result extraction/combination/analysis scripts.
+- `config/` — run groups to combine (e.g., LR sweeps, checkpoints).
+- `notebooks/` — analysis notebooks (performance curves, correlations, etc.).
+- `third_party/jaxued/` — upstream code (submodule).
+- `figures/` — GIFs/PNGs used by this README.
+
+### Repro tips
+- Pin the upstream submodule to the commit you trained against (already recorded in `.gitmodules`).
+- When upgrading JAX/Flax, do a quick smoke run (like the command above) to catch API drift early.
+
+### Troubleshooting
+- If `evo_ued` isn’t found, add this repo to `PYTHONPATH` (or `pip install -e .`).
+- If Parquet writes fail, install a Parquet engine, e.g. `pip install pyarrow`.
+- Deprecation warnings like `jax.tree_map is deprecated` are benign for our runs.
+
+### Licensing & attribution
+- We rely on upstream JaxUED for most functionality. Please refer to their license and cite appropriately.
+- This repo adds minimal glue and analysis around our experiments.
