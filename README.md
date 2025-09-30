@@ -1,4 +1,4 @@
-# Evo‑UED (built on JaxUED)
+# Evo-UED
 
 <div align="center">
     <img src="figures/Labyrinth_299.gif" >
@@ -12,36 +12,49 @@
     <img src="figures/LabyrinthFlipped_299.gif">
 </div>
 
-This repo contains our research‑specific additions on top of upstream JaxUED. We keep the repo small by:
-- importing everything from upstream `jaxued`, and
-- shipping only our changes in a tiny overlay module `evo_ued` plus scripts/configs for results.
+This repo provides initial algorithms and experiments to link **evolutionary game theory (EGT)** to **unsupervised environment design (UED)** in reinforcement learning. The code is a thin overlay on [JaxUED](https://github.com/DramaCow/jaxued), which provides the environments and core algorithms; this repo provides the evolutionary modifications (to the Domain Randomisation and Prioritised Level Replay algorithms), as well as run configs and analysis scripts.
 
-What you get here is the minimum needed to reproduce our experiments and analysis.
+---
 
-### What’s new (vs upstream)
-- **Score function**: `evo_ued.utils.negative_mean_reward`
-  - Computes the time‑averaged reward per level over completed episodes, standardizes across the batch (z‑score), and returns the negative z‑score. Higher scores ≈ harder levels (lower rewards).
-- **Result pipelines** for sweeps and checkpoint evaluation:
-  - `scripts/extract_checkpoint_results.py` → convert each `results.npz` to a tidy Parquet table.
-  - `scripts/combine_checkpoint_results.py` → combine many Parquet files using simple JSON configs in `config/` (grouped by algorithm/run names, optional checkpoint).
-- **Configs**: ready‑to‑use JSONs in `config/` for 30k/50k steps and LR sweeps (e.g., `updates30k_lr_sweep.json`).
-- **Examples**: Maze examples only. Craftax/Gymnax examples live upstream and are removed here to avoid drift.
-- **Overlay only**: no vendored `src/jaxued`. We install upstream as a dependency and keep our changes isolated.
+## What we add
+
+- **Evolutionary weighting**  
+  - `evo_ued/utils.py` defines `negative_mean_reward`.  
+  - This computes average return per level, standardises across the batch, and flips the sign. Levels where the agent is weak are given higher priority.  
+  - Used in evolutionary versions of DR and PLR.
+
+- **Evolutionary UED variants**  
+  - `maze_dr_egt.py` and `maze_plr_egt.py` are evolutionary variants.  
+  - Baselines (DR, PLR, PAIRED) are also here, for comparison.  
+  - Only maze environments are included. Craftax and Gymnax examples remain upstream.
+
+- **Result handling**  
+  - `scripts/extract_checkpoint_results.py`: unpack each checkpoint into a Parquet file.  
+  - `scripts/combine_checkpoint_results.py`: merge results across runs using JSON configs in `config/`.
+
+- **Configs and notebooks**  
+  - JSONs for 30k/50k updates and LR sweeps.  
+  - Analysis notebooks for robustness, per-maze comparisons, and sensitivity tests.
+
+---
 
 ## Quickstart
 
-1) Get upstream code (submodule) and install:
+Clone and install upstream:
+
 ```bash
 git submodule update --init --recursive
 python -m pip install -e third_party/jaxued
 ```
 
-2) Make your overlay importable (no install needed):
+Make the overlay importable:
+
 ```bash
 export PYTHONPATH=$PWD/src:$PYTHONPATH
 ```
 
-3) Minimal run (maze, PLR‑style with our score):
+Minimal test run (PLR with evolutionary weighting):
+
 ```bash
 PYTHONPATH=src WANDB_MODE=disabled \
 python examples/maze_plr_egt.py \
@@ -50,31 +63,32 @@ python examples/maze_plr_egt.py \
   --level_buffer_capacity 8 --replay_prob 0.5 --minimum_fill_ratio 0.0
 ```
 
-4) Alternative tiny run (DR):
+Or with domain randomisation:
+
 ```bash
 PYTHONPATH=src WANDB_MODE=disabled \
 python examples/maze_dr_egt.py \
   --num_updates 1 --num_steps 8 --num_train_envs 2 --num_minibatches 1 --epoch_ppo 1
 ```
 
-### Using `neg_mean_reward`
-- Enable in `examples/maze_plr_egt.py` via `--score_function neg_mean_reward`.
-- Implementation is in `src/evo_ued/utils.py` and mirrors the logic in our diff (implemented on top of upstream `accumulate_rollout_stats`).
+## Results pipeline
 
-### Extract and combine results
-1) Extract each checkpoint’s `results.npz` into a tidy Parquet file:
+Extract results:
+
 ```bash
 python -m scripts.extract_checkpoint_results --results_root ./results --force
 ```
 
-2) Combine many runs into a single Parquet using a config from `config/`:
+Combine runs:
+
 ```bash
 python -m scripts.combine_checkpoint_results \
   --config config/updates30k_lr_sweep.json \
   --force
 ```
 
-Config format (example):
+Config example:
+
 ```json
 {
   "checkpoint": 118,
@@ -86,29 +100,20 @@ Config format (example):
   }
 }
 ```
-The combiner searches under:
-- `results/<run>/<seed>/<checkpoint>/results_extracted.parquet` (preferred), or
-- legacy flat locations under `results/<run>/<seed>/`.
-It concatenates all tables and tags each row with `run_name`, `seed`, and `checkpoint`.
 
-### Repo layout (what matters here)
-- `src/evo_ued/` — overlay (currently only `utils.py` with `negative_mean_reward`).
-- `examples/` — Maze examples only: `maze_{dr,plr,paired}.py`, `maze_*_egt.py`.
-- `scripts/` — result extraction/combination/analysis scripts.
-- `config/` — run groups to combine (e.g., LR sweeps, checkpoints).
-- `notebooks/` — analysis notebooks (performance curves, correlations, etc.).
+## Repo structure
+
+- `src/evo_ued/` — overlay utilities.
+- `examples/` — evolutionary + baseline maze runs.
+- `scripts/` — result extraction and combination.
+- `config/` — configs for sweeps and checkpoints.
+- `notebooks/` — analysis notebooks.
 - `third_party/jaxued/` — upstream code (submodule).
-- `figures/` — GIFs/PNGs used by this README.
+- `figures/` — GIFs of evaluation mazes for the README (from JaxUED).
 
-### Repro tips
-- Pin the upstream submodule to the commit you trained against (already recorded in `.gitmodules`).
-- When upgrading JAX/Flax, do a quick smoke run (like the command above) to catch API drift early.
+## Notes
 
-### Troubleshooting
-- If `evo_ued` isn’t found, add this repo to `PYTHONPATH` (or `pip install -e .`).
-- If Parquet writes fail, install a Parquet engine, e.g. `pip install pyarrow`.
-- Deprecation warnings like `jax.tree_map is deprecated` are benign for our runs.
-
-### Licensing & attribution
-- We rely on upstream JaxUED for most functionality. Please refer to their license and cite appropriately.
-- This repo adds minimal glue and analysis around our experiments.
+- Pin the upstream submodule commit you trained against.
+- Check small runs after upgrading JAX/Flax.
+- Install `pyarrow` if Parquet writes fail.
+- `jax.tree_map` deprecation warnings can be ignored.
