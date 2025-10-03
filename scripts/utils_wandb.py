@@ -277,7 +277,10 @@ class WandbDataClient:
             return pd.read_csv(csv_path)
 
         # Fetch from API
-        df = run.history(keys=list(keys) if keys else None, samples=samples)
+        _hist_kwargs: Dict[str, Any] = {"keys": list(keys) if keys else None}
+        if samples is not None:
+            _hist_kwargs["samples"] = int(samples)
+        df = run.history(**_hist_kwargs)
 
         # Prefer parquet if fastparquet/pyarrow is available, otherwise CSV
         try:
@@ -300,6 +303,7 @@ __all__ = [
     "WandbDataClient",
     "RunData",
     "RunKey",
+    "list_runs_metadata",
 ]
 
 
@@ -966,3 +970,243 @@ def check_update_step_alignment(
         for g, sub in steps.groupby("group"):
             _warn_if_inconsistent(f"group '{g}'", sub)
     return steps
+
+
+# ------------------------------ Run meta inspection ------------------------------
+
+
+def _safe_getattr(obj: Any, name: str, default: Any = None) -> Any:
+    try:
+        return getattr(obj, name)
+    except Exception:
+        return default
+
+
+def _to_timestamp(value: Any) -> Optional[pd.Timestamp]:
+    if value is None:
+        return None
+    try:
+        return pd.to_datetime(value, utc=True)
+    except Exception:
+        # Some W&B summaries store epoch seconds
+        try:
+            return pd.to_datetime(float(value), unit="s", utc=True)
+        except Exception:
+            return None
+
+
+def _run_file_stats(run: Any, *, max_files: Optional[int] = None) -> Dict[str, Any]:
+    total_bytes: int = 0
+    count: int = 0
+    try:
+        files_iter = run.files()  # paginated iterable
+        for f in files_iter:
+            try:
+                size = _safe_getattr(f, "size", 0) or 0
+                total_bytes += int(size)
+                count += 1
+                if max_files is not None and count >= int(max_files):
+                    break
+            except Exception:
+                # Skip problematic file entries
+                continue
+    except Exception:
+        pass
+    mb = float(total_bytes) / (1024.0 * 1024.0)
+    gb = float(total_bytes) / (1024.0 * 1024.0 * 1024.0)
+    return {
+        "num_files": count,
+        "total_file_bytes": int(total_bytes),
+        "total_file_mb": mb,
+        "total_file_gb": gb,
+    }
+
+
+def _summary_get(summary_obj: Any, key: str, default: Any = None) -> Any:
+    try:
+        get = summary_obj.get  # type: ignore[attr-defined]
+        if callable(get):
+            return get(key, default)
+    except Exception:
+        pass
+    try:
+        return summary_obj[key]  # type: ignore[index]
+    except Exception:
+        return default
+
+
+def list_runs_metadata(
+    entity: str,
+    project: str,
+    *,
+    filters: Optional[Dict[str, Any]] = None,
+    per_page: int = 200,
+    include_file_sizes: bool = False,
+    max_files: Optional[int] = None,
+    use_cache: bool = True,
+) -> pd.DataFrame:
+    """Return a DataFrame of key metadata for all runs in a project.
+
+    Columns include identifiers, state, timing, grouping, tags, URL, and
+    approximate storage usage (sum of run files) to help identify runs that
+    are safe to delete to reclaim space.
+
+    Parameters:
+        entity: W&B entity/org/user
+        project: W&B project name
+        filters: Optional API filters (same as wandb.Api().runs filters)
+        per_page: Pagination size for listing runs
+        include_file_sizes: If True, sum sizes of files attached to each run
+        max_files: Optional cap on files scanned per run (for speed)
+        use_cache: Construct client with caching of JSON/history (not used here)
+
+    Returns:
+        pandas.DataFrame with one row per run.
+    """
+    client = WandbDataClient(
+        entity,
+        project,
+        use_cache=use_cache,
+    )
+
+    runs = client.list_runs(filters=filters, per_page=per_page)
+    rows: List[Dict[str, Any]] = []
+
+    for run in runs:
+        # Core identifiers
+        run_id = _safe_getattr(run, "id")
+        name = _safe_getattr(run, "name")
+        path = f"{_safe_getattr(run, 'entity', entity)}/{_safe_getattr(run, 'project', project)}/{run_id}"
+        url = _safe_getattr(run, "url")
+
+        # Grouping / context
+        group = _safe_getattr(run, "group")
+        tags = list(_safe_getattr(run, "tags", []) or [])
+        state = _safe_getattr(run, "state")
+        user = _safe_getattr(run, "user")
+        username = _safe_getattr(user, "username") if user is not None else None
+
+        # Timing info
+        created_at = _to_timestamp(_safe_getattr(run, "created_at"))
+        updated_at = _to_timestamp(_safe_getattr(run, "updated_at"))
+
+        # From summary
+        summary = _safe_getattr(run, "summary")
+        runtime_seconds = None
+        finished_at = None
+        try:
+            get = summary.get  # type: ignore[attr-defined]
+            runtime_seconds = get("_runtime")
+            finished_at = _to_timestamp(get("_timestamp"))
+        except Exception:
+            # Fallback to item access
+            try:
+                runtime_seconds = summary["_runtime"]  # type: ignore[index]
+            except Exception:
+                runtime_seconds = None
+            try:
+                finished_at = _to_timestamp(summary["_timestamp"])  # type: ignore[index]
+            except Exception:
+                finished_at = None
+
+        runtime_hours = float(runtime_seconds) / 3600.0 if runtime_seconds else None
+
+        # Common summary metrics (fast to read; avoids heavy history fetches)
+        summary_num_updates = (
+            _summary_get(summary, "num_updates") if summary is not None else None
+        )
+        summary_num_env_steps = (
+            _summary_get(summary, "num_env_steps") if summary is not None else None
+        )
+        summary_step = _summary_get(summary, "_step") if summary is not None else None
+        summary_solve_mean = (
+            _summary_get(summary, "solve_rate/mean") if summary is not None else None
+        )
+        summary_return_mean = (
+            _summary_get(summary, "return/mean") if summary is not None else None
+        )
+        summary_eval_len_mean = (
+            _summary_get(summary, "eval_ep_lengths/mean")
+            if summary is not None
+            else None
+        )
+
+        # Sweep info if present
+        sweep_id = None
+        try:
+            sw = _safe_getattr(run, "sweep")
+            if sw is not None:
+                sweep_id = (
+                    _safe_getattr(sw, "id") or _safe_getattr(sw, "name") or str(sw)
+                )
+        except Exception:
+            sweep_id = None
+
+        # Config/summary sizes
+        config = _safe_getattr(run, "config", {}) or {}
+        summary_dict: Dict[str, Any] = {}
+        try:
+            # Convert to basic dict where possible
+            summary_dict = _to_jsonable(summary) if summary is not None else {}
+        except Exception:
+            summary_dict = {}
+        config_keys = len(list(config.keys())) if isinstance(config, dict) else None
+        summary_keys = (
+            len(list(summary_dict.keys())) if isinstance(summary_dict, dict) else None
+        )
+        config_run_name = None
+        try:
+            if isinstance(config, dict):
+                config_run_name = config.get("run_name")
+        except Exception:
+            config_run_name = None
+
+        # File stats (approx storage)
+        file_stats: Dict[str, Any] = {}
+        if include_file_sizes:
+            file_stats = _run_file_stats(run, max_files=max_files)
+
+        rows.append(
+            {
+                "entity": _safe_getattr(run, "entity", entity),
+                "project": _safe_getattr(run, "project", project),
+                "run_id": run_id,
+                "run_name": name,
+                "config.run_name": config_run_name,
+                "path": path,
+                "url": url,
+                "state": state,
+                "group": group,
+                "tags": tags,
+                "username": username,
+                "created_at": created_at,
+                "updated_at": updated_at,
+                "finished_at": finished_at,
+                "runtime_seconds": runtime_seconds,
+                "runtime_hours": runtime_hours,
+                "summary.num_updates": summary_num_updates,
+                "summary.num_env_steps": summary_num_env_steps,
+                "summary._step": summary_step,
+                "summary.solve_rate/mean": summary_solve_mean,
+                "summary.return/mean": summary_return_mean,
+                "summary.eval_ep_lengths/mean": summary_eval_len_mean,
+                "sweep_id": sweep_id,
+                "config_keys": config_keys,
+                "summary_keys": summary_keys,
+                **file_stats,
+            }
+        )
+
+    df = pd.DataFrame(rows)
+    # Useful default sort: largest first, then most recent
+    sort_cols: List[str] = []
+    if "total_file_bytes" in df.columns:
+        sort_cols.append("total_file_bytes")
+    if "updated_at" in df.columns:
+        sort_cols.append("updated_at")
+    if sort_cols:
+        try:
+            df = df.sort_values(by=sort_cols, ascending=[False] * len(sort_cols))
+        except Exception:
+            pass
+    return df.reset_index(drop=True)
