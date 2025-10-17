@@ -14,17 +14,19 @@
 
 This repo provides initial algorithms and experiments to link **evolutionary game theory (EGT)** to **unsupervised environment design (UED)** in reinforcement learning. The code is a thin overlay on [JaxUED](https://github.com/DramaCow/jaxued), which provides the environments and core algorithms; this repo provides the evolutionary modifications (to the Domain Randomisation and Prioritised Level Replay algorithms), as well as run configs and analysis scripts.
 
+A talk presenting the preliminary results can be found [here](https://youtu.be/XR-uPPCXGAs). 
+
 ---
 
 ## What we add
 
 - **Evolutionary weighting**  
   - `evo_ued/utils.py` defines `negative_mean_reward`.  
-  - This computes average return per level, standardises across the batch, and flips the sign. Levels where the agent is weak are given higher priority.  
-  - Used in evolutionary versions of DR and PLR.
+  - This computes inverse average return per level, standardised across the batches. This is used to up-weight the importance or sampling frequency of "under-exploited" levels where the agent is currently weak.  
+  - This is used in evolutionary versions of DR and PLR.
 
 - **Evolutionary UED variants**  
-  - `maze_dr_egt.py` and `maze_plr_egt.py` are evolutionary variants.  
+  - `maze_dr_egt.py` and `maze_plr_egt.py` are evolutionary UED variants.  
   - Baselines (DR, PLR, PAIRED) are also here, for comparison.  
   - Only maze environments are included. Craftax and Gymnax examples remain upstream.
 
