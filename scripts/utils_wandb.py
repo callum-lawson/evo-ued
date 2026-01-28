@@ -26,13 +26,17 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 import warnings
 import pandas as pd
 
+# wandb is optional - only needed for WandbDataClient, not OfflineDataClient
+_WANDB_AVAILABLE = False
 try:
     import wandb
     from wandb.apis.public import Api, Run  # type: ignore
-except Exception as exc:  # pragma: no cover - import-time hint
-    raise RuntimeError(
-        "wandb is required to use scripts.wandb_client. Install with `pip install wandb`."
-    ) from exc
+
+    _WANDB_AVAILABLE = True
+except ImportError:
+    wandb = None  # type: ignore
+    Api = None  # type: ignore
+    Run = None  # type: ignore
 
 
 def _ensure_dir(path: Path) -> None:
@@ -140,6 +144,11 @@ class WandbDataClient:
         use_cache: bool = True,
         api: Optional[Api] = None,
     ) -> None:
+        if not _WANDB_AVAILABLE:
+            raise RuntimeError(
+                "wandb is required for WandbDataClient. Install with `pip install wandb` "
+                "or use OfflineDataClient for cached data."
+            )
         self.entity = entity
         self.project = project
         self.api = api or wandb.Api()
@@ -299,12 +308,364 @@ class WandbDataClient:
         return df
 
 
+# ----------------------------- Offline Data Access -----------------------------
+
+
+@dataclasses.dataclass
+class OfflineRunData:
+    """Container for run data loaded from local cache (no wandb Run object)."""
+
+    key: RunKey
+    config: Dict[str, Any]
+    summary: Dict[str, Any]
+    history_df: "Any"  # pandas.DataFrame
+
+
+class OfflineDataClient:
+    """Client for reading wandb data from local cache files (no network access).
+
+    This client reads from the same cache directory structure used by WandbDataClient,
+    allowing offline analysis of previously cached wandb data.
+
+    The cache structure is:
+        {cache_dir}/{entity}/{project}/{run_id}/
+            config.json
+            summary.json
+            history_*.parquet (or .csv)
+    """
+
+    def __init__(
+        self,
+        entity: str,
+        project: str,
+        *,
+        data_dir: Optional[os.PathLike[str] | str] = None,
+    ) -> None:
+        """Initialize offline client.
+
+        Args:
+            entity: W&B entity/org/user
+            project: W&B project name
+            data_dir: Root directory containing cached data. Defaults to
+                      ~/.cache/evo-ued/wandb or XDG_CACHE_HOME/evo-ued/wandb.
+                      The entity/project subdirectories should exist under this.
+        """
+        self.entity = entity
+        self.project = project
+        self.logger = logging.getLogger(__name__)
+
+        if data_dir is not None:
+            self.data_dir = Path(data_dir).expanduser()
+        else:
+            xdg = os.environ.get("XDG_CACHE_HOME")
+            base = Path(xdg) if xdg else Path.home() / ".cache"
+            self.data_dir = base / "evo-ued" / "wandb"
+
+        self._project_dir = self.data_dir / entity / project
+        if not self._project_dir.exists():
+            raise FileNotFoundError(
+                f"Cache directory not found: {self._project_dir}. "
+                "Use WandbDataClient to download data first, or check data_dir path."
+            )
+
+    def list_runs(self) -> List[str]:
+        """List all cached run IDs."""
+        if not self._project_dir.exists():
+            return []
+        return sorted(
+            d.name for d in self._project_dir.iterdir()
+            if d.is_dir() and (d / "config.json").exists()
+        )
+
+    def fetch_run_data(
+        self,
+        run_id: str,
+        *,
+        keys: Optional[Sequence[str]] = None,
+        max_rows: Optional[int] = None,
+    ) -> OfflineRunData:
+        """Load run data from local cache.
+
+        Args:
+            run_id: The run ID to load
+            keys: Optional list of history columns to select (loads all if None)
+            max_rows: Optional limit on history rows (takes last N rows)
+
+        Returns:
+            OfflineRunData with config, summary, and history DataFrame
+        """
+        run_dir = self._project_dir / run_id
+        if not run_dir.exists():
+            raise FileNotFoundError(f"Run directory not found: {run_dir}")
+
+        key = RunKey(self.entity, self.project, run_id)
+
+        # Load config
+        config_path = run_dir / "config.json"
+        if config_path.exists():
+            with config_path.open("r", encoding="utf-8") as f:
+                config = json.load(f)
+        else:
+            self.logger.warning("config.json not found for run %s", run_id)
+            config = {}
+
+        # Load summary
+        summary_path = run_dir / "summary.json"
+        if summary_path.exists():
+            with summary_path.open("r", encoding="utf-8") as f:
+                summary = json.load(f)
+        else:
+            self.logger.warning("summary.json not found for run %s", run_id)
+            summary = {}
+
+        # Load history - prefer largest parquet file (likely full history)
+        history_df = self._load_history(run_dir, keys=keys)
+
+        if max_rows is not None and len(history_df) > max_rows:
+            history_df = history_df.tail(max_rows)
+
+        return OfflineRunData(
+            key=key, config=config, summary=summary, history_df=history_df
+        )
+
+    def _load_history(
+        self,
+        run_dir: Path,
+        *,
+        keys: Optional[Sequence[str]] = None,
+    ) -> pd.DataFrame:
+        """Load history from cache, preferring largest parquet file."""
+        parquet_files = list(run_dir.glob("history_*.parquet"))
+        csv_files = list(run_dir.glob("history_*.csv"))
+
+        df: Optional[pd.DataFrame] = None
+
+        # Prefer parquet, choose largest file (most complete)
+        if parquet_files:
+            largest = max(parquet_files, key=lambda p: p.stat().st_size)
+            try:
+                df = pd.read_parquet(largest)
+            except Exception as e:
+                self.logger.warning("Failed to read parquet %s: %s", largest, e)
+
+        # Fallback to CSV
+        if df is None and csv_files:
+            largest = max(csv_files, key=lambda p: p.stat().st_size)
+            try:
+                df = pd.read_csv(largest)
+            except Exception as e:
+                self.logger.warning("Failed to read csv %s: %s", largest, e)
+
+        if df is None:
+            self.logger.warning("No history files found in %s", run_dir)
+            df = pd.DataFrame()
+
+        # Select requested columns if specified
+        if keys is not None and len(df) > 0:
+            available = [k for k in keys if k in df.columns]
+            if available:
+                df = df[available]
+
+        return df
+
+
 __all__ = [
     "WandbDataClient",
+    "OfflineDataClient",
     "RunData",
+    "OfflineRunData",
     "RunKey",
     "list_runs_metadata",
+    "collect_histories_offline",
+    "collect_multi_histories_offline",
 ]
+
+
+# -------------------------- Offline History Collection --------------------------
+
+
+def _select_runs_offline(
+    client: OfflineDataClient,
+    runname_to_group: Dict[str, str],
+) -> List[Tuple[str, str]]:
+    """Select runs from offline cache by matching config.run_name to mapping.
+
+    Returns list of (run_id, group_label) tuples.
+    """
+    chosen: List[Tuple[str, str]] = []
+    run_ids = client.list_runs()
+
+    for run_id in run_ids:
+        try:
+            data = client.fetch_run_data(run_id, keys=[])
+        except Exception:
+            continue
+
+        # Try to match by config.run_name
+        orig_name = data.config.get("run_name")
+        if orig_name and orig_name in runname_to_group:
+            chosen.append((run_id, runname_to_group[orig_name]))
+
+    return chosen
+
+
+def collect_histories_offline(
+    client: OfflineDataClient,
+    runname_to_group: Dict[str, str],
+    *,
+    step_key: str,
+    metric_key: str,
+    max_rows: Optional[int] = None,
+    attach_config_keys: Optional[Sequence[str]] = None,
+    attach_summary_keys: Optional[Sequence[str]] = None,
+) -> pd.DataFrame:
+    """Collect histories from offline cache for a single metric.
+
+    This is the offline equivalent of collect_histories_from_run_mapping().
+
+    Args:
+        client: OfflineDataClient instance
+        runname_to_group: Mapping from run names (config.run_name) to group labels
+        step_key: Column name for step/update number
+        metric_key: Column name for the metric to extract
+        max_rows: Optional limit on history rows per run
+        attach_config_keys: Config keys to attach as columns
+        attach_summary_keys: Summary keys to attach as columns
+
+    Returns:
+        DataFrame with columns: [step_key, value, run_id, group] plus attached metadata
+    """
+    chosen = _select_runs_offline(client, runname_to_group)
+    frames: List[pd.DataFrame] = []
+
+    for run_id, group_label in chosen:
+        try:
+            data = client.fetch_run_data(run_id, max_rows=max_rows)
+        except Exception:
+            continue
+
+        df = data.history_df
+        step_col = _choose_step_key(df.columns, step_key)
+        if step_col is None or metric_key not in df.columns:
+            continue
+
+        slim = (
+            df[[step_col, metric_key]]
+            .dropna()
+            .rename({metric_key: "value", step_col: step_key}, axis=1)
+            .assign(run_id=run_id, group=group_label)
+        )
+
+        # Attach metadata
+        meta: Dict[str, Any] = {}
+        if attach_config_keys:
+            for k in attach_config_keys:
+                meta[str(k)] = _to_jsonable(_get_nested(data.config, str(k)))
+        if attach_summary_keys:
+            for k in attach_summary_keys:
+                meta[f"summary.{k}"] = _to_jsonable(_get_nested(data.summary, str(k)))
+        if meta:
+            slim = slim.assign(**meta)
+
+        frames.append(slim)
+
+    if not frames:
+        base: Dict[str, Any] = {
+            step_key: pd.Series(dtype="float64"),
+            "value": pd.Series(dtype="float64"),
+            "run_id": pd.Series(dtype="object"),
+            "group": pd.Series(dtype="object"),
+        }
+        if attach_config_keys:
+            for k in attach_config_keys:
+                base[str(k)] = pd.Series(dtype="object")
+        if attach_summary_keys:
+            for k in attach_summary_keys:
+                base[f"summary.{k}"] = pd.Series(dtype="object")
+        return pd.DataFrame(base)
+
+    return pd.concat(frames, ignore_index=True)
+
+
+def collect_multi_histories_offline(
+    client: OfflineDataClient,
+    runname_to_group: Dict[str, str],
+    *,
+    step_key: str,
+    metric_keys: Sequence[str],
+    max_rows: Optional[int] = None,
+    attach_config_keys: Optional[Sequence[str]] = None,
+    attach_summary_keys: Optional[Sequence[str]] = None,
+) -> pd.DataFrame:
+    """Collect histories from offline cache for multiple metrics (long form).
+
+    This is the offline equivalent of collect_multi_histories_from_run_mapping().
+
+    Args:
+        client: OfflineDataClient instance
+        runname_to_group: Mapping from run names (config.run_name) to group labels
+        step_key: Column name for step/update number
+        metric_keys: Column names for metrics to extract
+        max_rows: Optional limit on history rows per run
+        attach_config_keys: Config keys to attach as columns
+        attach_summary_keys: Summary keys to attach as columns
+
+    Returns:
+        DataFrame with columns: [step_key, metric, value, run_id, group] plus metadata
+    """
+    chosen = _select_runs_offline(client, runname_to_group)
+    frames: List[pd.DataFrame] = []
+
+    for run_id, group_label in chosen:
+        try:
+            data = client.fetch_run_data(run_id, max_rows=max_rows)
+        except Exception:
+            continue
+
+        df = data.history_df
+        step_col = _choose_step_key(df.columns, step_key)
+        if step_col is None:
+            continue
+
+        present_metrics = [m for m in metric_keys if m in df.columns]
+        if not present_metrics:
+            continue
+
+        wide = df[[step_col] + present_metrics].copy()
+        long = wide.melt(id_vars=[step_col], var_name="metric", value_name="value")
+        long = long.dropna(subset=["value"]).rename({step_col: step_key}, axis=1)
+        long = long.assign(run_id=run_id, group=group_label)
+
+        # Attach metadata
+        meta: Dict[str, Any] = {}
+        if attach_config_keys:
+            for k in attach_config_keys:
+                meta[str(k)] = _to_jsonable(_get_nested(data.config, str(k)))
+        if attach_summary_keys:
+            for k in attach_summary_keys:
+                meta[f"summary.{k}"] = _to_jsonable(_get_nested(data.summary, str(k)))
+        if meta:
+            long = long.assign(**meta)
+
+        frames.append(long)
+
+    if not frames:
+        base: Dict[str, Any] = {
+            step_key: pd.Series(dtype="float64"),
+            "metric": pd.Series(dtype="object"),
+            "value": pd.Series(dtype="float64"),
+            "run_id": pd.Series(dtype="object"),
+            "group": pd.Series(dtype="object"),
+        }
+        if attach_config_keys:
+            for k in attach_config_keys:
+                base[str(k)] = pd.Series(dtype="object")
+        if attach_summary_keys:
+            for k in attach_summary_keys:
+                base[f"summary.{k}"] = pd.Series(dtype="object")
+        return pd.DataFrame(base)
+
+    return pd.concat(frames, ignore_index=True)
 
 
 # ------------------------------ History collection ------------------------------
