@@ -809,3 +809,203 @@ def summarize_final_values(
     formatted = {str(row["group"]): _fmt(row) for _, row in summary.iterrows()}
     wide = pd.DataFrame([formatted])
     return wide
+
+
+# --------------------- DR baseline checkpoint-result tables --------------------
+
+
+def load_dr_baseline_checkpoint_results(
+    results_root: Any = "./results",
+    checkpoint: int = 118,
+    run_pattern: str = "dr_baseline_eval250_seed*_30000a",
+) -> pd.DataFrame:
+    """Load attempt-level DR baseline checkpoint results from extracted parquet files."""
+    from pathlib import Path
+
+    root = Path(results_root).resolve()
+    paths = sorted(root.glob(f"{run_pattern}/*/{checkpoint}/results_extracted.parquet"))
+    if not paths:
+        return pd.DataFrame(
+            {
+                "run_name": pd.Series(dtype="object"),
+                "policy_id": pd.Series(dtype="object"),
+                "seed": pd.Series(dtype="int64"),
+                "checkpoint": pd.Series(dtype="int64"),
+                "attempt": pd.Series(dtype="int64"),
+                "maze": pd.Series(dtype="object"),
+                "level_index": pd.Series(dtype="int64"),
+                "cum_reward": pd.Series(dtype="float64"),
+                "episode_length": pd.Series(dtype="float64"),
+                "completed": pd.Series(dtype="float64"),
+            }
+        )
+
+    frames: List[pd.DataFrame] = []
+    for path in paths:
+        df = pd.read_parquet(path).copy()
+        if df.empty:
+            continue
+
+        df["seed"] = pd.to_numeric(df["seed"], errors="coerce").astype("Int64")
+        df["checkpoint"] = pd.to_numeric(df["checkpoint"], errors="coerce").astype(
+            "Int64"
+        )
+        df["attempt"] = pd.to_numeric(df["attempt"], errors="coerce").astype("Int64")
+        df["level_index"] = pd.to_numeric(df["level_index"], errors="coerce").astype(
+            "Int64"
+        )
+        df["cum_reward"] = pd.to_numeric(df["cum_reward"], errors="coerce")
+        df["episode_length"] = pd.to_numeric(df["episode_length"], errors="coerce")
+        df["completed"] = pd.to_numeric(df["completed"], errors="coerce")
+        df["maze"] = df["level_name"].astype(str)
+        df["policy_id"] = df["run_name"].astype(str)
+        frames.append(
+            df[
+                [
+                    "run_name",
+                    "policy_id",
+                    "seed",
+                    "checkpoint",
+                    "attempt",
+                    "maze",
+                    "level_index",
+                    "cum_reward",
+                    "episode_length",
+                    "completed",
+                ]
+            ]
+        )
+
+    if not frames:
+        return pd.DataFrame()
+
+    return (
+        pd.concat(frames, ignore_index=True)
+        .sort_values(by=["seed", "level_index", "attempt"])
+        .reset_index(drop=True)
+    )
+
+
+def summarize_dr_baseline_seed_maze_results(attempt_df: pd.DataFrame) -> pd.DataFrame:
+    """Summarize DR baseline checkpoint results to one row per seed and maze."""
+    if attempt_df is None or attempt_df.empty:
+        return pd.DataFrame(
+            {
+                "run_name": pd.Series(dtype="object"),
+                "policy_id": pd.Series(dtype="object"),
+                "seed": pd.Series(dtype="int64"),
+                "checkpoint": pd.Series(dtype="int64"),
+                "maze": pd.Series(dtype="object"),
+                "level_index": pd.Series(dtype="int64"),
+                "mean_return": pd.Series(dtype="float64"),
+                "return_std": pd.Series(dtype="float64"),
+                "solve_rate": pd.Series(dtype="float64"),
+                "mean_episode_length": pd.Series(dtype="float64"),
+                "num_attempts": pd.Series(dtype="int64"),
+            }
+        )
+
+    summary = (
+        attempt_df.groupby(
+            ["run_name", "policy_id", "seed", "checkpoint", "maze", "level_index"],
+            as_index=False,
+        )
+        .agg(
+            mean_return=("cum_reward", "mean"),
+            return_std=("cum_reward", "std"),
+            solve_rate=("completed", "mean"),
+            mean_episode_length=("episode_length", "mean"),
+            num_attempts=("attempt", "nunique"),
+        )
+        .sort_values(by=["seed", "level_index"])
+        .reset_index(drop=True)
+    )
+    summary["return_std"] = summary["return_std"].fillna(0.0)
+    return summary
+
+
+def compute_seed_maze_matrix(
+    summary_df: pd.DataFrame,
+    value_col: str = "mean_return",
+) -> pd.DataFrame:
+    """Pivot a seed-by-maze summary table into a matrix."""
+    if summary_df is None or summary_df.empty:
+        return pd.DataFrame()
+    matrix = summary_df.pivot(index="seed", columns="maze", values=value_col)
+    if "level_index" in summary_df.columns:
+        order = (
+            summary_df[["maze", "level_index"]]
+            .drop_duplicates()
+            .sort_values(by=["level_index", "maze"])
+        )
+        cols = [m for m in order["maze"].tolist() if m in matrix.columns]
+        if cols:
+            matrix = matrix.loc[:, cols]
+    return matrix.sort_index()
+
+
+def compute_maze_correlations_across_seeds(
+    summary_df: pd.DataFrame,
+    value_col: str = "mean_return",
+    method: str = "pearson",
+) -> pd.DataFrame:
+    """Compute maze-by-maze correlations across seed profiles."""
+    matrix = compute_seed_maze_matrix(summary_df, value_col=value_col)
+    if matrix.shape[0] < 2 or matrix.shape[1] < 2:
+        return pd.DataFrame()
+    return matrix.corr(method=method)  # type: ignore[arg-type]
+
+
+def select_tradeoff_pairs(
+    summary_df: pd.DataFrame,
+    value_col: str = "mean_return",
+    top_n: int = 3,
+    method: str = "pearson",
+) -> pd.DataFrame:
+    """Return the most negatively correlated maze pairs across seeds."""
+    corr = compute_maze_correlations_across_seeds(
+        summary_df, value_col=value_col, method=method
+    )
+    if corr.empty:
+        return pd.DataFrame(
+            {
+                "maze_x": pd.Series(dtype="object"),
+                "maze_y": pd.Series(dtype="object"),
+                "correlation": pd.Series(dtype="float64"),
+            }
+        )
+
+    rows: List[Dict[str, object]] = []
+    cols = list(corr.columns)
+    for i, maze_x in enumerate(cols):
+        for maze_y in cols[i + 1 :]:
+            rows.append(
+                {
+                    "maze_x": str(maze_x),
+                    "maze_y": str(maze_y),
+                    "correlation": float(corr.loc[maze_x, maze_y]),
+                }
+            )
+    pairs = pd.DataFrame(rows).sort_values(by="correlation", ascending=True)
+    return pairs.head(max(0, int(top_n))).reset_index(drop=True)
+
+
+def select_representative_seeds(
+    summary_df: pd.DataFrame,
+    value_col: str = "mean_return",
+) -> List[int]:
+    """Select low-, median-, and high-performing seeds by overall mean."""
+    if summary_df is None or summary_df.empty:
+        return []
+    overall = (
+        summary_df.groupby("seed", as_index=False)[value_col]
+        .mean()
+        .sort_values(by=value_col, ascending=True)
+        .reset_index(drop=True)
+    )
+    seeds = overall["seed"].astype(int).tolist()
+    if len(seeds) <= 3:
+        return seeds
+    mid = len(seeds) // 2
+    chosen = [seeds[0], seeds[mid], seeds[-1]]
+    return list(dict.fromkeys(chosen))

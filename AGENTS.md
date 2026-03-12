@@ -20,6 +20,8 @@ PYTHONPATH=src WANDB_MODE=disabled python examples/maze_plr_egt.py --num_updates
 
 Use the project conda environment for `python`, `pip`, and script execution. On this machine, `conda run -n evo-ued python` works for imports, but `pytest` may need to be installed separately before `pytest -q` will run. For results processing, use `python -m scripts.extract_checkpoint_results --results_root ./results --force` and `python -m scripts.combine_checkpoint_results --config config/updates30k_lr_sweep.json --force`.
 
+For local analysis and checkpoint evaluation on this machine, prefer an activated `evo-ued` shell or `conda run -n evo-ued ...` over the bare system `python3`. The bare shell may be missing packages such as `numpy`/`pandas`, and example/eval commands may also need `PYTHONPATH=$PWD/src:$PWD/third_party/jaxued/src:$PYTHONPATH` so `jaxued` resolves correctly.
+
 ## Coding Style & Naming Conventions
 Use 4-space indentation and keep Python style consistent with the existing codebase. Follow descriptive, snake_case naming for modules, functions, and variables; keep example scripts named by environment and algorithm variant (`maze_plr.py`, `maze_plr_egt.py`). Prefer names that describe intent and outcome, such as `load_checkpoint` or `compute_loss`, and boolean names that read naturally (`is_ready`, `should_retry`). The repository already uses Black configuration in `pyproject.toml`; format Python edits with `black scripts tests examples src` when touching those areas. Avoid broad reformatting of `third_party/`.
 
