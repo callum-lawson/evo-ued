@@ -942,13 +942,16 @@ def main(config=None, project="JAXUED_TEST"):
             train_state = train_state_og.replace(
                 pro_train_state=train_state_og.pro_train_state.replace(params=params)
             )
-            return train_state.pro_train_state, config
+            return train_state.pro_train_state, config, step
 
-        train_state, config = load(rng_init, og_config["checkpoint_directory"])
+        train_state, config, step = load(rng_init, og_config["checkpoint_directory"])
         states, cum_rewards, episode_lengths = jax.vmap(eval, (0, None))(
             jax.random.split(rng_eval, og_config["eval_num_attempts"]), train_state
         )
-        save_loc = og_config["checkpoint_directory"].replace("checkpoints", "results")
+        save_loc = os.path.join(
+            og_config["checkpoint_directory"].replace("checkpoints", "results"),
+            str(step),
+        )
         os.makedirs(save_loc, exist_ok=True)
         np.savez_compressed(
             os.path.join(save_loc, "results.npz"),

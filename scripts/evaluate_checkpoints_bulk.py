@@ -280,8 +280,8 @@ def main():
 
         rc = run_eval(example_script, seed_dir, per_seed_pass_args)
 
-        # The example scripts save to results/<run>/<seed>/results.npz by default.
-        # Move it into the checkpoint subdirectory if present.
+        # Older example scripts saved to results/<run>/<seed>/results.npz.
+        # Keep this move as a backward-compatible fallback.
         flat_results_npz = (
             Path(str(seed_dir).replace("checkpoints", "results", 1)) / "results.npz"
         )

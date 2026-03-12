@@ -257,7 +257,16 @@ def update_actor_critic_rnn(
     """
     obs, actions, dones, log_probs, values, targets, advantages, env_weights = batch
     last_dones = jnp.roll(dones, 1, axis=0).at[0].set(False)
-    batch = obs, actions, last_dones, log_probs, values, targets, advantages, env_weights
+    batch = (
+        obs,
+        actions,
+        last_dones,
+        log_probs,
+        values,
+        targets,
+        advantages,
+        env_weights,
+    )
 
     def update_epoch(carry, _):
         def update_minibatch(train_state, minibatch):
@@ -276,9 +285,9 @@ def update_actor_critic_rnn(
             def loss_fn(params):
                 _, pi, values_pred = train_state.apply_fn(
                     params, (obs, last_dones), init_hstate
-                ) # forward pass
-                log_probs_pred = pi.log_prob(actions) # action probabilites
-                entropy = pi.entropy().mean() # pull towards entropy
+                )  # forward pass
+                log_probs_pred = pi.log_prob(actions)  # action probabilites
+                entropy = pi.entropy().mean()  # pull towards entropy
 
                 ratio = jnp.exp(log_probs_pred - log_probs)
 
@@ -291,7 +300,7 @@ def update_actor_critic_rnn(
 
                 values_pred_clipped = values + (values_pred - values).clip(
                     -clip_eps, clip_eps
-                ) # value function clipping
+                )  # value function clipping
                 value_loss_per_step = 0.5 * jnp.maximum(
                     (values_pred - targets) ** 2,
                     (values_pred_clipped - targets) ** 2,
@@ -304,7 +313,7 @@ def update_actor_critic_rnn(
                 return loss, (l_vf, l_clip, entropy)
 
             grad_fn = jax.value_and_grad(loss_fn, has_aux=True)
-            loss, grads = grad_fn(train_state.params) # get loss and gradients
+            loss, grads = grad_fn(train_state.params)  # get loss and gradients
             if update_grad:
                 train_state = train_state.apply_gradients(grads=grads)
             return train_state, loss
@@ -612,7 +621,9 @@ def main(config=None, project="JAXUED_TEST"):
         _std = jnp.sqrt(((env_returns - _mean) ** 2).mean() + 1e-8)
         z = (env_returns - _mean) / _std
         env_weight_per_env = jax.nn.softmax(-z)
-        env_weight_per_env = env_weight_per_env * config["num_train_envs"] / env_weight_per_env.sum()
+        env_weight_per_env = (
+            env_weight_per_env * config["num_train_envs"] / env_weight_per_env.sum()
+        )
         env_weights = jnp.broadcast_to(
             env_weight_per_env[None, :], (config["num_steps"], config["num_train_envs"])
         )
@@ -741,13 +752,16 @@ def main(config=None, project="JAXUED_TEST"):
             loaded_checkpoint = checkpoint_manager.restore(step)
             params = loaded_checkpoint["params"]
             train_state = train_state_og.replace(params=params)
-            return train_state, config
+            return train_state, config, step
 
-        train_state, config = load(rng_init, og_config["checkpoint_directory"])
+        train_state, config, step = load(rng_init, og_config["checkpoint_directory"])
         states, cum_rewards, episode_lengths = jax.vmap(eval, (0, None))(
             jax.random.split(rng_eval, og_config["eval_num_attempts"]), train_state
         )
-        save_loc = og_config["checkpoint_directory"].replace("checkpoints", "results")
+        save_loc = os.path.join(
+            og_config["checkpoint_directory"].replace("checkpoints", "results"),
+            str(step),
+        )
         os.makedirs(save_loc, exist_ok=True)
         np.savez_compressed(
             os.path.join(save_loc, "results.npz"),
