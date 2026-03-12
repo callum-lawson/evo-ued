@@ -814,17 +814,58 @@ def summarize_final_values(
 # --------------------- DR baseline checkpoint-result tables --------------------
 
 
-def load_dr_baseline_checkpoint_results(
+def load_checkpoint_results_for_runs(
+    run_names: Sequence[str],
     results_root: Any = "./results",
     checkpoint: int = 118,
-    run_pattern: str = "dr_baseline_eval250_seed*_30000a",
 ) -> pd.DataFrame:
-    """Load attempt-level DR baseline checkpoint results from extracted parquet files."""
+    """Load attempt-level checkpoint results for an explicit list of run names."""
     from pathlib import Path
 
     root = Path(results_root).resolve()
-    paths = sorted(root.glob(f"{run_pattern}/*/{checkpoint}/results_extracted.parquet"))
-    if not paths:
+    frames: List[pd.DataFrame] = []
+    for run_name in run_names:
+        paths = sorted(
+            root.glob(f"{run_name}/*/{checkpoint}/results_extracted.parquet")
+        )
+        for path in paths:
+            df = pd.read_parquet(path).copy()
+            if df.empty:
+                continue
+
+            df["seed"] = pd.to_numeric(df["seed"], errors="coerce").astype("Int64")
+            df["checkpoint"] = pd.to_numeric(df["checkpoint"], errors="coerce").astype(
+                "Int64"
+            )
+            df["attempt"] = pd.to_numeric(df["attempt"], errors="coerce").astype(
+                "Int64"
+            )
+            df["level_index"] = pd.to_numeric(
+                df["level_index"], errors="coerce"
+            ).astype("Int64")
+            df["cum_reward"] = pd.to_numeric(df["cum_reward"], errors="coerce")
+            df["episode_length"] = pd.to_numeric(df["episode_length"], errors="coerce")
+            df["completed"] = pd.to_numeric(df["completed"], errors="coerce")
+            df["maze"] = df["level_name"].astype(str)
+            df["policy_id"] = df["run_name"].astype(str)
+            frames.append(
+                df[
+                    [
+                        "run_name",
+                        "policy_id",
+                        "seed",
+                        "checkpoint",
+                        "attempt",
+                        "maze",
+                        "level_index",
+                        "cum_reward",
+                        "episode_length",
+                        "completed",
+                    ]
+                ]
+            )
+
+    if not frames:
         return pd.DataFrame(
             {
                 "run_name": pd.Series(dtype="object"),
@@ -840,49 +881,34 @@ def load_dr_baseline_checkpoint_results(
             }
         )
 
-    frames: List[pd.DataFrame] = []
-    for path in paths:
-        df = pd.read_parquet(path).copy()
-        if df.empty:
-            continue
-
-        df["seed"] = pd.to_numeric(df["seed"], errors="coerce").astype("Int64")
-        df["checkpoint"] = pd.to_numeric(df["checkpoint"], errors="coerce").astype(
-            "Int64"
-        )
-        df["attempt"] = pd.to_numeric(df["attempt"], errors="coerce").astype("Int64")
-        df["level_index"] = pd.to_numeric(df["level_index"], errors="coerce").astype(
-            "Int64"
-        )
-        df["cum_reward"] = pd.to_numeric(df["cum_reward"], errors="coerce")
-        df["episode_length"] = pd.to_numeric(df["episode_length"], errors="coerce")
-        df["completed"] = pd.to_numeric(df["completed"], errors="coerce")
-        df["maze"] = df["level_name"].astype(str)
-        df["policy_id"] = df["run_name"].astype(str)
-        frames.append(
-            df[
-                [
-                    "run_name",
-                    "policy_id",
-                    "seed",
-                    "checkpoint",
-                    "attempt",
-                    "maze",
-                    "level_index",
-                    "cum_reward",
-                    "episode_length",
-                    "completed",
-                ]
-            ]
-        )
-
-    if not frames:
-        return pd.DataFrame()
-
     return (
         pd.concat(frames, ignore_index=True)
         .sort_values(by=["seed", "level_index", "attempt"])
         .reset_index(drop=True)
+    )
+
+
+def load_dr_baseline_checkpoint_results(
+    results_root: Any = "./results",
+    checkpoint: int = 118,
+    run_pattern: str = "dr_baseline_eval250_seed*_30000a",
+) -> pd.DataFrame:
+    """Load attempt-level DR baseline checkpoint results from extracted parquet files."""
+    from pathlib import Path
+
+    root = Path(results_root).resolve()
+    run_names = sorted(
+        {
+            path.parts[0]
+            for path in root.glob(
+                f"{run_pattern}/*/{checkpoint}/results_extracted.parquet"
+            )
+        }
+    )
+    return load_checkpoint_results_for_runs(
+        run_names=run_names,
+        results_root=results_root,
+        checkpoint=checkpoint,
     )
 
 

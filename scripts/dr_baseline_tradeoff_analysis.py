@@ -4,7 +4,9 @@
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
+import re
 import sys
 
 import matplotlib
@@ -20,7 +22,7 @@ if __package__ in {None, ""}:
 from scripts.training_analyses import (
     compute_maze_correlations_across_seeds,
     compute_seed_maze_matrix,
-    load_dr_baseline_checkpoint_results,
+    load_checkpoint_results_for_runs,
     select_representative_seeds,
     select_tradeoff_pairs,
     summarize_dr_baseline_seed_maze_results,
@@ -47,19 +49,57 @@ def _write_table(df: pd.DataFrame, path: Path) -> None:
         raise ValueError(f"Unsupported table suffix: {path.suffix}")
 
 
+def _slugify(value: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "_", value.lower()).strip("_")
+    return slug or "group"
+
+
+def _load_group_runs(
+    config_path: Path, group_name: str
+) -> tuple[list[str], int | None]:
+    with config_path.open("r", encoding="utf-8") as f:
+        cfg = json.load(f)
+    groups = cfg.get("groups", {})
+    if group_name not in groups:
+        raise ValueError(f"Group '{group_name}' not found in {config_path}")
+    run_names = [str(name) for name in groups[group_name]]
+    checkpoint = cfg.get("checkpoint")
+    return run_names, int(checkpoint) if checkpoint is not None else None
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Generate initial DR baseline trade-off analysis outputs."
+        description="Generate checkpoint-result trade-off analysis outputs for a configured run group."
+    )
+    parser.add_argument(
+        "--config",
+        default="./config/eval250_updates30k_lr1e-4.json",
+        help="JSON config containing a 'groups' mapping.",
+    )
+    parser.add_argument(
+        "--group",
+        default="DR (baseline)",
+        help="Group name from the config file to analyze.",
     )
     parser.add_argument("--results_root", default="./results")
     parser.add_argument(
         "--output_dir",
-        default="./results/analysis/dr_baseline_30k_118",
+        default=None,
         help="Directory for summary tables and plots.",
     )
-    parser.add_argument("--checkpoint", type=int, default=118)
+    parser.add_argument(
+        "--checkpoint",
+        type=int,
+        default=None,
+        help="Checkpoint to analyze. Defaults to the config checkpoint if present.",
+    )
     parser.add_argument("--top_tradeoff_pairs", type=int, default=3)
-    parser.add_argument("--expected_num_seeds", type=int, default=10)
+    parser.add_argument(
+        "--expected_num_seeds",
+        type=int,
+        default=None,
+        help="Expected number of runs/seeds. Defaults to the size of the selected group.",
+    )
     parser.add_argument("--expected_num_mazes", type=int, default=8)
     parser.add_argument("--expected_attempts", type=int, default=250)
     return parser.parse_args()
@@ -68,17 +108,30 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
 
-    output_dir = Path(args.output_dir).resolve()
+    config_path = Path(args.config).resolve()
+    run_names, config_checkpoint = _load_group_runs(config_path, args.group)
+    checkpoint = args.checkpoint if args.checkpoint is not None else config_checkpoint
+    if checkpoint is None:
+        raise ValueError("No checkpoint provided and no checkpoint found in config.")
+
+    if args.output_dir is None:
+        output_dir = (
+            Path(args.results_root).resolve()
+            / "analysis"
+            / config_path.stem
+            / f"{_slugify(args.group)}_ckpt{checkpoint}"
+        )
+    else:
+        output_dir = Path(args.output_dir).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    attempt_df = load_dr_baseline_checkpoint_results(
+    attempt_df = load_checkpoint_results_for_runs(
+        run_names=run_names,
         results_root=args.results_root,
-        checkpoint=args.checkpoint,
+        checkpoint=checkpoint,
     )
     if attempt_df.empty:
-        raise ValueError(
-            "No DR baseline checkpoint results found for the requested dataset."
-        )
+        raise ValueError("No checkpoint results found for the requested group.")
 
     summary_df = summarize_dr_baseline_seed_maze_results(attempt_df)
     seed_maze_matrix = compute_seed_maze_matrix(summary_df, value_col="mean_return")
@@ -99,10 +152,13 @@ def main() -> int:
     num_seeds = summary_df["seed"].nunique()
     num_mazes = summary_df["maze"].nunique()
     attempt_counts = sorted(summary_df["num_attempts"].dropna().unique().tolist())
-    if num_seeds != args.expected_num_seeds:
-        raise ValueError(
-            f"Expected {args.expected_num_seeds} seeds, found {num_seeds}."
-        )
+    expected_num_seeds = (
+        args.expected_num_seeds
+        if args.expected_num_seeds is not None
+        else len(run_names)
+    )
+    if num_seeds != expected_num_seeds:
+        raise ValueError(f"Expected {expected_num_seeds} seeds, found {num_seeds}.")
     if num_mazes != args.expected_num_mazes:
         raise ValueError(
             f"Expected {args.expected_num_mazes} mazes, found {num_mazes}."
@@ -121,7 +177,7 @@ def main() -> int:
 
     heatmap_ax = plot_seed_maze_heatmap(
         seed_maze_matrix,
-        title="DR baseline seeds by maze (mean return)",
+        title=f"{args.group} by maze (mean return)",
         cmap="viridis",
         annotate=False,
     )
@@ -129,7 +185,7 @@ def main() -> int:
 
     solve_ax = plot_seed_maze_heatmap(
         solve_rate_matrix,
-        title="DR baseline seeds by maze (solve rate)",
+        title=f"{args.group} by maze (solve rate)",
         cmap="mako",
         annotate=False,
     )
@@ -137,7 +193,7 @@ def main() -> int:
 
     corr_ax = plot_seed_maze_heatmap(
         maze_corr,
-        title="Maze correlations across DR baseline seeds",
+        title=f"Maze correlations across {args.group}",
         cmap="vlag",
         annotate=True,
     )
@@ -147,7 +203,7 @@ def main() -> int:
         summary_df,
         seeds=representative_seeds,
         value_col="mean_return",
-        title="Representative DR baseline seed profiles",
+        title=f"Representative {args.group} profiles",
     )
     _save_plot(profile_ax, output_dir / "representative_seed_profiles_mean_return.png")
 
@@ -169,6 +225,8 @@ def main() -> int:
         )
 
     print(f"Wrote analysis outputs to {output_dir}")
+    print(f"Group: {args.group}")
+    print(f"Checkpoint: {checkpoint}")
     print(
         f"Seeds: {num_seeds}, Mazes: {num_mazes}, Attempts per maze: {attempt_counts}"
     )
