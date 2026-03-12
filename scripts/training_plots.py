@@ -412,6 +412,7 @@ def plot_similarity_heatmap(
     cmap: str = "vlag",
     annotate: bool = False,
     fmt: str = ".2f",
+    figsize: Optional[tuple[float, float]] = None,
 ):
     import matplotlib.pyplot as plt
 
@@ -426,17 +427,25 @@ def plot_similarity_heatmap(
         ax.set_axis_off()
         return ax
 
-    _, ax = plt.subplots(figsize=(max(6, len(matrix) * 0.5), max(4, len(matrix) * 0.5)))
+    fig_w = max(8, len(matrix.columns) * 1.2)
+    fig_h = max(6, len(matrix.index) * 1.0)
+    _, ax = plt.subplots(figsize=figsize or (fig_w, fig_h))
     if sns is not None:
         sns.heatmap(
             matrix, cmap=cmap, annot=annotate, fmt=fmt, square=True, cbar=True, ax=ax
         )
+        ax.set_xticklabels(
+            list(map(str, matrix.columns)), rotation=45, ha="right", rotation_mode="anchor"
+        )
+        ax.set_yticklabels(list(map(str, matrix.index)), rotation=0)
     else:
         im = ax.imshow(matrix.to_numpy(), cmap=cmap, aspect="equal")
         plt.colorbar(im, ax=ax)
         ax.set_xticks(range(len(matrix.columns)))
         ax.set_yticks(range(len(matrix.index)))
-        ax.set_xticklabels(list(map(str, matrix.columns)), rotation=45, ha="right")
+        ax.set_xticklabels(
+            list(map(str, matrix.columns)), rotation=45, ha="right", rotation_mode="anchor"
+        )
         ax.set_yticklabels(list(map(str, matrix.index)))
         if annotate:
             for i, row in enumerate(matrix.index):
