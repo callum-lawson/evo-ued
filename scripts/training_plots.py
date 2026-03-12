@@ -454,6 +454,116 @@ def plot_similarity_heatmap(
     return ax
 
 
+def plot_seed_maze_heatmap(
+    matrix: pd.DataFrame,
+    title: Optional[str] = None,
+    cmap: str = "viridis",
+    annotate: bool = False,
+    fmt: str = ".2f",
+):
+    """Plot a seed-by-maze heatmap."""
+    return plot_similarity_heatmap(
+        matrix=matrix,
+        title=title,
+        cmap=cmap,
+        annotate=annotate,
+        fmt=fmt,
+    )
+
+
+def plot_seed_profiles(
+    summary_df: pd.DataFrame,
+    seeds: Sequence[int],
+    value_col: str = "mean_return",
+    title: Optional[str] = None,
+):
+    """Plot maze performance profiles for selected seeds."""
+    import matplotlib.pyplot as plt
+
+    if summary_df is None or summary_df.empty or not seeds:
+        _, ax = plt.subplots(figsize=(6, 3))
+        ax.text(0.5, 0.5, "No data", ha="center", va="center")
+        ax.set_axis_off()
+        return ax
+
+    work = summary_df[summary_df["seed"].isin(list(seeds))].copy()
+    if work.empty:
+        _, ax = plt.subplots(figsize=(6, 3))
+        ax.text(0.5, 0.5, "No selected seeds found", ha="center", va="center")
+        ax.set_axis_off()
+        return ax
+
+    order = (
+        work[["maze", "level_index"]]
+        .drop_duplicates()
+        .sort_values(by=["level_index", "maze"])
+    )
+    maze_order = order["maze"].tolist()
+    palette = make_algorithm_palette([str(s) for s in seeds])
+
+    _, ax = plt.subplots(figsize=(max(8, len(maze_order) * 1.2), 4))
+    for seed in seeds:
+        sdf = work[work["seed"] == seed].sort_values(by=["level_index", "maze"])
+        if sdf.empty:
+            continue
+        ax.plot(
+            maze_order,
+            sdf.set_index("maze").reindex(maze_order)[value_col].to_list(),
+            marker="o",
+            label=f"seed {seed}",
+            color=palette.get(str(seed)),
+        )
+
+    ax.set_xlabel("maze")
+    ax.set_ylabel(value_col)
+    ax.tick_params(axis="x", rotation=45)
+    if title:
+        ax.set_title(title)
+    ax.legend(title="policy")
+    return ax
+
+
+def plot_tradeoff_scatter(
+    summary_df: pd.DataFrame,
+    maze_x: str,
+    maze_y: str,
+    value_col: str = "mean_return",
+    title: Optional[str] = None,
+):
+    """Plot one point per seed for a pair of mazes."""
+    import matplotlib.pyplot as plt
+
+    if summary_df is None or summary_df.empty:
+        _, ax = plt.subplots(figsize=(5, 4))
+        ax.text(0.5, 0.5, "No data", ha="center", va="center")
+        ax.set_axis_off()
+        return ax
+
+    pivot = summary_df.pivot(index="seed", columns="maze", values=value_col)
+    if maze_x not in pivot.columns or maze_y not in pivot.columns:
+        _, ax = plt.subplots(figsize=(5, 4))
+        ax.text(0.5, 0.5, "Missing maze columns", ha="center", va="center")
+        ax.set_axis_off()
+        return ax
+
+    plot_df = pivot[[maze_x, maze_y]].dropna().reset_index()
+    _, ax = plt.subplots(figsize=(5, 4))
+    ax.scatter(plot_df[maze_x], plot_df[maze_y])
+    for _, row in plot_df.iterrows():
+        ax.annotate(
+            str(int(row["seed"])),
+            (row[maze_x], row[maze_y]),
+            textcoords="offset points",
+            xytext=(4, 4),
+            fontsize=8,
+        )
+    ax.set_xlabel(maze_x)
+    ax.set_ylabel(maze_y)
+    if title:
+        ax.set_title(title)
+    return ax
+
+
 # Removed previous heatmap/winner-bar helpers in favor of grouped bars
 
 
