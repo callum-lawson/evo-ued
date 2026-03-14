@@ -1,7 +1,7 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-Core overlay code lives in `src/evo_ued/`. Example training entry points are in `examples/` (`maze_dr_egt.py`, `maze_plr_egt.py`, plus baseline scripts). Analysis and result-processing utilities live in `scripts/`. Tests are in `tests/`, with lightweight execution checks for example scripts. Keep generated artifacts such as `results/`, `checkpoints/`, and `wandb/` out of functional changes. Upstream dependencies are vendored under `third_party/`, especially `third_party/jaxued/`; treat those as external code unless a change explicitly targets the submodule copy.
+Core overlay code lives in `src/evo_ued/`. Example training entry points are in `examples/` (`maze_dr_egt.py`, `maze_plr_egt.py`, plus baseline scripts). Analysis and result-processing utilities live in `scripts/`. Tests are in `tests/`, with lightweight execution checks for example scripts. The agent has access to the shared Obsidian notes vault at `/mnt/c/Users/Callum/Documents/obsidian-notes/` if the user explicitly asks it to read from or write to those notes. Keep generated artifacts such as `results/`, `checkpoints/`, and `wandb/` out of functional changes. Upstream dependencies are vendored under `third_party/`, especially `third_party/jaxued/`; treat those as external code unless a change explicitly targets the submodule copy.
 
 ## Build, Test, and Development Commands
 Initialize and install the upstream package first:
